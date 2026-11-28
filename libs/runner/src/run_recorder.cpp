@@ -38,6 +38,10 @@ void RunRecorder::begin(control_silkit::HubTransport& transport)
         return;
     }
     record_ = std::make_shared<scenario::TimelineRecord>(ctx_.plan.recorded_variables);
+    if (ctx_.plan.record_events)
+    {
+        record_->enable_events();
+    }
     const std::size_t participant_count = ctx_.config.participants.size();
     bindings_.assign(participant_count, {});
     std::vector<std::string> incarnations(participant_count);
@@ -85,6 +89,31 @@ void RunRecorder::begin(control_silkit::HubTransport& transport)
     }
 
     samples_.recording_begins(std::move(incarnations));
+    if (ctx_.plan.record_events)
+    {
+        samples_.events_begins();
+    }
+}
+
+void RunRecorder::consume_events(std::vector<RunSamples::EventBatch> batches)
+{
+    if (!record_ || !record_->events_enabled())
+    {
+        return;
+    }
+    for (auto& batch : batches)
+    {
+        if (batch.agent_dropped > 0)
+        {
+            record_->note_agent_events_dropped(batch.participant, batch.agent_dropped);
+        }
+        for (auto& ev : batch.events)
+        {
+            const SimTime t = ev.time;
+            record_->event(batch.participant, t, ev.level, std::move(ev.text));
+            last_seen_ = last_seen_ ? std::max(*last_seen_, t) : t;
+        }
+    }
 }
 
 void RunRecorder::consume(std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> taken)
@@ -127,6 +156,10 @@ void RunRecorder::drain()
         return;
     }
     consume(samples_.take());
+    if (record_->events_enabled())
+    {
+        consume_events(samples_.take_events());
+    }
 }
 
 void RunRecorder::finish(SimulationController& controller, const WatchResult& watched, RunOutcome& outcome)
@@ -136,11 +169,14 @@ void RunRecorder::finish(SimulationController& controller, const WatchResult& wa
         return;
     }
     auto remaining = samples_.take_and_end();
+    auto remaining_events =
+        ctx_.plan.record_events ? samples_.take_events_and_end() : std::vector<RunSamples::EventBatch>{};
     if (!record_)
     {
         return;
     }
     consume(std::move(remaining));
+    consume_events(std::move(remaining_events));
     std::optional<SimTime> to = last_seen_;
     if (watched.end == WatchEnd::Ended && watched.state == orch::ParticipantState::Shutdown &&
         ctx_.plan.stop_at_ms && controller.wall_time_to_stop_at().has_value())
@@ -156,6 +192,7 @@ void RunRecorder::end()
     if (active())
     {
         samples_.recording_ends();
+        samples_.events_ends();
     }
 }
 

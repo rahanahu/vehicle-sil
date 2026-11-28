@@ -123,6 +123,10 @@
       "maximum": 600000,
       "description": "Virtual milliseconds to keep recording samples into the timeline after a normal scenario assertion or wait-timeout failure (--record-after-fail-ms). Requires scenario; omitted means stop immediately at failure. No new scenario steps, writes, motions, or dithers are issued after failure detection (over_at_ms); writes already pipelined for (fail_at, over_at_ms] before detection when time_step_ms >= ecu_step_ms may already have been applied by the ECU and remain visible in the timeline.",
       "examples": [300, 1000]
+    },
+    "record_events": {
+      "type": "boolean",
+      "description": "true: record virtual-timestamped structured ECU control events (control::Agent::log / Ecu::log) into the timeline (--record-events). Raw child stdout/stderr pipes carry wall-clock times only and are not included. false is as if the key was not written: --record-events still counts."
     }
   }
 }

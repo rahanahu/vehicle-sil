@@ -84,6 +84,7 @@ runner::RunChoices run_choices(const RunRequest& request)
     {
         choices.record_after_fail = std::chrono::milliseconds(*request.intent.record_after_fail_ms);
     }
+    choices.record_events = request.intent.record_events;
     return choices;
 }
 
@@ -401,6 +402,7 @@ RunReport run_file(const RunRequest& request, const runner::RunObservers& observ
         input.catalog = &catalog;
         input.record = report.run->scenario.timeline_record.get();
         input.recorded_variables = runner.plan().recorded_variables;
+        input.record_events = runner.plan().record_events;
         input.findings = report.check.findings;
         input.findings.insert(input.findings.end(), report.findings.begin(), report.findings.end());
         if (const std::string error = runner.write_timeline(format_timeline_json(input)); !error.empty())

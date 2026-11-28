@@ -176,6 +176,8 @@ export interface Intent {
   record?: string[];
   /** Virtual milliseconds to keep recording sampled signals after a scenario assertion/timeout failure (1..600000). */
   record_after_fail_ms?: number;
+  /** true: record virtual-timestamped structured ECU events (`Ecu::log` / `Agent::log`) on the timeline. */
+  record_events?: boolean;
   variant?: string;
   params?: Record<string, string | number | boolean>;
   speed?: number | 'max';

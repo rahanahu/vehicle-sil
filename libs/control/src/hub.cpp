@@ -813,7 +813,13 @@ void Hub::set_values_tap(ValuesTap tap)
     values_tap_ = std::move(tap);
 }
 
-void Hub::agent_events(ConnectionId id, const std::vector<Event>& events)
+void Hub::set_events_tap(EventsTap tap)
+{
+    const std::lock_guard lock(mutex_);
+    events_tap_ = std::move(tap);
+}
+
+void Hub::agent_events(ConnectionId id, const std::vector<Event>& events, std::uint64_t agent_dropped)
 {
     const std::lock_guard lock(mutex_);
     const auto* c = connection(id);
@@ -825,6 +831,10 @@ void Hub::agent_events(ConnectionId id, const std::vector<Event>& events)
     if (it == peers_.end() || it->second.connection != id)
     {
         return;
+    }
+    if (events_tap_ && (!events.empty() || agent_dropped > 0))
+    {
+        events_tap_(c->participant, c->incarnation, events, agent_dropped);
     }
     for_subscribers(c->participant, [&](Subscription& s) {
         if (s.options_.events)

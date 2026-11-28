@@ -82,6 +82,8 @@ struct RunChoices
     std::vector<scenario::RecordedVariable> recorded_variables{};
     /// Virtual-time post-failure tail recording duration (RunIntent::record_after_fail_ms); empty = off.
     std::optional<std::chrono::milliseconds> record_after_fail{};
+    /// Opt-in virtual-timestamped structured ECU event recording (RunIntent::record_events).
+    bool record_events = false;
 };
 
 /// What the plan knows of one participant of the run beside its entry in the configuration: what
@@ -147,6 +149,8 @@ struct RunPlan
     std::vector<scenario::RecordedVariable> recorded_variables{};
     /// Virtual-time post-failure tail recording duration (RunChoices::record_after_fail); empty = off.
     std::optional<std::chrono::milliseconds> record_after_fail{};
+    /// Opt-in virtual-timestamped structured ECU event recording (RunChoices::record_events).
+    bool record_events = false;
 
     /// The configuration of `check` (a check that passed has one).
     [[nodiscard]] const config::SimulationConfig& config() const { return *check.config; }

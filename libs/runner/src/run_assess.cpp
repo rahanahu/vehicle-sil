@@ -843,15 +843,39 @@ std::vector<config::Finding> assess_run(const RunOutcome& outcome)
                          format_provenance(reached != scenario.steps.rend() ? &reached->call_stack : nullptr));
         }
     }
-    if (!outcome.scenario.timeline.empty() && outcome.scenario.timeline_record && outcome.scenario.timeline_record->dropped() > 0)
+    if (!outcome.scenario.timeline.empty() && outcome.scenario.timeline_record &&
+        outcome.scenario.timeline_record->dropped_any())
     {
         const std::uint64_t points = outcome.scenario.timeline_record->dropped();
-        add(config::Severity::Note, "timeline-limit",
-            "the timeline " + outcome.scenario.timeline + " does not have the whole run: " + std::to_string(points) +
-                (points == 1 ? " older point was" : " older points were") +
-                " dropped at its limits (the newest points, up to the end of the scenario, are all there). limits.dropped in "
-                "the file says of which series and of which time; for a file with every point, record a shorter scenario",
-            nullptr);
+        const std::uint64_t events = outcome.scenario.timeline_record->dropped_events();
+        if (points > 0 && events == 0)
+        {
+            add(config::Severity::Note, "timeline-limit",
+                "the timeline " + outcome.scenario.timeline + " does not have the whole run: " + std::to_string(points) +
+                    (points == 1 ? " older point was" : " older points were") +
+                    " dropped at its limits (the newest points, up to the end of the scenario, are all there). limits.dropped in "
+                    "the file says of which series and of which time; for a file with every point, record a shorter scenario",
+                nullptr);
+        }
+        else if (points == 0 && events > 0)
+        {
+            add(config::Severity::Note, "timeline-limit",
+                "the timeline " + outcome.scenario.timeline + " does not have all ECU events of the run: " +
+                    std::to_string(events) + (events == 1 ? " event was" : " events were") +
+                    " dropped at its limits (the newest events are kept). limits.events_dropped in the file says of which "
+                    "participant and of which time; for a file with every event, record a shorter run",
+                nullptr);
+        }
+        else
+        {
+            add(config::Severity::Note, "timeline-limit",
+                "the timeline " + outcome.scenario.timeline + " does not have the whole run: " + std::to_string(points) +
+                    (points == 1 ? " older point" : " older points") + " and " + std::to_string(events) +
+                    (events == 1 ? " ECU event were" : " ECU events were") +
+                    " dropped at its limits (the newest points and events are kept). limits.dropped and limits.events_dropped "
+                    "in the file say of which series, participant and time; for a complete file, record a shorter run",
+                nullptr);
+        }
     }
     if (!outcome.scenario.timeline_error.empty())
     {

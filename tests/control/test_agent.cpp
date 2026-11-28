@@ -400,6 +400,42 @@ TEST_CASE(control_agent_events_are_bounded)
     CHECK_EQ(f.agent.stats().events_dropped, std::uint64_t{1});
 }
 
+TEST_CASE(control_agent_setter_log_stamps_current_step_time)
+{
+    Agent agent;
+    bool connected = true;
+    int param = 1;
+    agent.input(
+        "ecu.connected",
+        [&]() { return connected; },
+        [&](bool value) {
+            connected = value;
+            agent.log(EventLevel::Info, value ? "reconnected" : "disconnected");
+        });
+    agent.input("gain", &param, {.parameter = true});
+
+    // Parameter write at first step (0 ms) is still permitted.
+    CHECK(agent.submit(Command{1, {{"gain", std::int64_t{7}}}, std::nullopt}).status == SubmitStatus::Queued);
+    agent.on_step_begin(at(0ms));
+    agent.on_step_end(at(0ms));
+    CHECK_EQ(param, 7);
+
+    // Parameter write after first step is still rejected.
+    CHECK(agent.submit(Command{2, {{"gain", std::int64_t{9}}}, std::nullopt}).status == SubmitStatus::Invalid);
+
+    // Advance to 290 ms, then apply ecu.connected = false at 300 ms: setter log must stamp 300 ms (not 290 ms).
+    agent.on_step_begin(at(290ms));
+    agent.on_step_end(at(290ms));
+    CHECK(agent.submit(Command{3, {{"ecu.connected", false}}, at(300ms)}).status == SubmitStatus::Queued);
+    agent.on_step_begin(at(300ms));
+    agent.on_step_end(at(300ms));
+
+    std::vector<Event> events;
+    CHECK_EQ(agent.drain_events(events), std::size_t{1});
+    CHECK(events[0].time == at(300ms));
+    CHECK(events[0].text == "disconnected");
+}
+
 TEST_CASE(control_agent_finish_cancels_what_is_waiting)
 {
     Fixture f;

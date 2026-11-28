@@ -295,6 +295,64 @@ std::uint64_t TimelineRecord::dropped() const noexcept
     return out;
 }
 
+std::uint64_t TimelineRecord::dropped_events() const noexcept
+{
+    std::uint64_t out = 0;
+    if (closed_)
+    {
+        for (const EventDrop& d : events_dropped_)
+        {
+            out += d.dropped + d.agent_dropped;
+        }
+        return out;
+    }
+    for (const ParticipantEvents& pe : participant_events_)
+    {
+        out += pe.dropped + pe.agent_dropped;
+    }
+    return out;
+}
+
+TimelineRecord::ParticipantEvents& TimelineRecord::participant_events_for(std::string_view participant)
+{
+    for (ParticipantEvents& pe : participant_events_)
+    {
+        if (pe.participant == participant)
+        {
+            return pe;
+        }
+    }
+    ParticipantEvents& added = participant_events_.emplace_back();
+    added.participant = std::string(participant);
+    return added;
+}
+
+void TimelineRecord::event(std::string participant, SimTime at, control::EventLevel level, std::string text)
+{
+    if (closed_ || !events_enabled_)
+    {
+        return;
+    }
+    ParticipantEvents& pe = participant_events_for(participant);
+    pe.events.push_back(Event{at, std::move(participant), level, std::move(text), next_event_seq_++});
+    ++events_total_;
+    if (limits_.events_per_participant == 0 || limits_.events_total == 0 ||
+        pe.events.size() >= 2 * limits_.events_per_participant || events_total_ >= 2 * limits_.events_total)
+    {
+        enforce_events(false);
+    }
+}
+
+void TimelineRecord::note_agent_events_dropped(std::string participant, std::uint64_t count)
+{
+    if (closed_ || !events_enabled_ || count == 0)
+    {
+        return;
+    }
+    ParticipantEvents& pe = participant_events_for(participant);
+    pe.agent_dropped += count;
+}
+
 void TimelineRecord::failed(std::size_t step, TimelineFailure failure)
 {
     if (!closed_ && (step < failures_.size() || step == kNoStep))
@@ -339,6 +397,19 @@ void TimelineRecord::close(std::optional<SimTime> to)
             series.last_sample.reset();
         }
         total_ = 0;
+        events_.clear();
+        events_dropped_.clear();
+        for (const ParticipantEvents& pe : participant_events_)
+        {
+            if (pe.agent_dropped > 0)
+            {
+                events_dropped_.push_back(EventDrop{pe.participant, 0, std::nullopt, std::nullopt, pe.agent_dropped});
+            }
+        }
+        std::sort(events_dropped_.begin(), events_dropped_.end(),
+                  [](const EventDrop& a, const EventDrop& b) { return a.participant < b.participant; });
+        participant_events_.clear();
+        events_total_ = 0;
         return;
     }
     const SimTime limit = *to;
@@ -389,6 +460,62 @@ void TimelineRecord::close(std::optional<SimTime> to)
         }
     }
     enforce(true);
+    if (events_enabled_)
+    {
+        events_total_ = 0;
+        for (ParticipantEvents& pe : participant_events_)
+        {
+            std::stable_sort(pe.events.begin(), pe.events.end(), [](const Event& a, const Event& b) {
+                return a.at != b.at ? a.at < b.at : a.seq < b.seq;
+            });
+            while (!pe.events.empty() && pe.events.back().at > limit)
+            {
+                pe.events.pop_back();
+            }
+            if (pe.dropped > 0)
+            {
+                if (pe.events.empty())
+                {
+                    pe.dropped_before.reset();
+                }
+                else
+                {
+                    pe.dropped_before = pe.events.front().at;
+                }
+            }
+            events_total_ += pe.events.size();
+        }
+        enforce_events(true);
+        events_.clear();
+        events_.reserve(events_total_);
+        events_dropped_.clear();
+        for (ParticipantEvents& pe : participant_events_)
+        {
+            for (Event& ev : pe.events)
+            {
+                events_.push_back(std::move(ev));
+            }
+            if (pe.dropped > 0 || pe.agent_dropped > 0)
+            {
+                events_dropped_.push_back(
+                    EventDrop{pe.participant, pe.dropped, pe.dropped_from, pe.dropped_before, pe.agent_dropped});
+            }
+        }
+        std::stable_sort(events_.begin(), events_.end(), [](const Event& a, const Event& b) {
+            if (a.at != b.at)
+            {
+                return a.at < b.at;
+            }
+            if (a.participant != b.participant)
+            {
+                return a.participant < b.participant;
+            }
+            return a.seq < b.seq;
+        });
+        std::sort(events_dropped_.begin(), events_dropped_.end(),
+                  [](const EventDrop& a, const EventDrop& b) { return a.participant < b.participant; });
+        participant_events_.clear();
+    }
 }
 
 void TimelineRecord::drop_oldest(Series& series, std::size_t keep)
@@ -490,6 +617,132 @@ void TimelineRecord::enforce(bool final)
         }
     }
     total_ = total;
+}
+
+void TimelineRecord::drop_oldest_events(ParticipantEvents& pe, std::size_t keep)
+{
+    if (pe.events.size() <= keep)
+    {
+        return;
+    }
+    const std::size_t drop = pe.events.size() - keep;
+    if (!pe.dropped_from)
+    {
+        pe.dropped_from = pe.events.front().at;
+    }
+    else
+    {
+        pe.dropped_from = std::min(*pe.dropped_from, pe.events.front().at);
+    }
+    pe.dropped += static_cast<std::uint64_t>(drop);
+    pe.events.erase(pe.events.begin(), pe.events.begin() + static_cast<std::ptrdiff_t>(drop));
+    if (!pe.events.empty())
+    {
+        pe.dropped_before = pe.events.front().at;
+    }
+    else
+    {
+        pe.dropped_before.reset();
+    }
+}
+
+void TimelineRecord::enforce_events(bool final)
+{
+    const std::size_t perPart =
+        final ? limits_.events_per_participant : limits_.events_per_participant + limits_.events_per_participant / 2;
+    const std::size_t all = final ? limits_.events_total : limits_.events_total + limits_.events_total / 2;
+    std::vector<std::size_t> counts(participant_events_.size());
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < participant_events_.size(); ++i)
+    {
+        drop_oldest_events(participant_events_[i], perPart);
+        counts[i] = participant_events_[i].events.size();
+        total += counts[i];
+    }
+    if (total > all)
+    {
+        if (all == 0)
+        {
+            for (ParticipantEvents& pe : participant_events_)
+            {
+                drop_oldest_events(pe, 0);
+            }
+            events_total_ = 0;
+            return;
+        }
+        const auto fits = [&](std::size_t level) {
+            std::size_t sum = 0;
+            for (const std::size_t c : counts)
+            {
+                sum += std::min(c, level);
+            }
+            return sum <= all;
+        };
+        std::size_t low = 0;
+        std::size_t high = *std::max_element(counts.begin(), counts.end());
+        while (low < high)
+        {
+            const std::size_t middle = low + (high - low + 1) / 2;
+            if (fits(middle))
+            {
+                low = middle;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+        total = 0;
+        for (std::size_t i = 0; i < participant_events_.size(); ++i)
+        {
+            drop_oldest_events(participant_events_[i], low + 1);
+            total += participant_events_[i].events.size();
+        }
+        while (total > all)
+        {
+            std::size_t victim = 0;
+            bool found = false;
+            for (std::size_t i = 0; i < participant_events_.size(); ++i)
+            {
+                const auto& pe = participant_events_[i];
+                if (pe.events.empty())
+                {
+                    continue;
+                }
+                if (!found)
+                {
+                    victim = i;
+                    found = true;
+                    continue;
+                }
+                const auto& cur = participant_events_[victim];
+                if (pe.events.size() != cur.events.size())
+                {
+                    if (pe.events.size() > cur.events.size())
+                    {
+                        victim = i;
+                    }
+                }
+                else
+                {
+                    const auto key = [](const ParticipantEvents& x) {
+                        return std::tuple{x.events.front().at, std::string_view(x.participant), x.events.front().seq};
+                    };
+                    if (key(pe) < key(cur))
+                    {
+                        victim = i;
+                    }
+                }
+            }
+            if (!found)
+            {
+                break;
+            }
+            drop_oldest_events(participant_events_[victim], participant_events_[victim].events.size() - 1);
+            --total;
+        }
+    }
+    events_total_ = total;
 }
 
 } // namespace vehicle_sil::scenario

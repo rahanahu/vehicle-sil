@@ -804,6 +804,37 @@
         }
       }
     },
+    "events": {
+      "type": "array",
+      "description": "Opt-in virtual-timestamped structured ECU control events (control::Agent::log / Ecu::log) recorded up to recorded_to_ms when --record-events (or \"record_events\": true) is set; omitted otherwise. Ordered by virtual time at_ms (then participant and emission order). Raw child stdout/stderr pipes carry wall-clock times only and are not included.",
+      "items": {
+        "type": "object",
+        "required": [
+          "at_ms",
+          "participant",
+          "level",
+          "text"
+        ],
+        "properties": {
+          "at_ms": {
+            "type": "number",
+            "description": "The ECU simulation step time in virtual milliseconds at which the event was logged."
+          },
+          "participant": {
+            "type": "string",
+            "description": "The participant whose control agent emitted the event."
+          },
+          "level": {
+            "type": "string",
+            "description": "\"info\", \"warning\" or \"error\"."
+          },
+          "text": {
+            "type": "string",
+            "description": "The event message text (truncated at control::wire::kMaxTextBytes on the wire if longer)."
+          }
+        }
+      }
+    },
     "findings": {
       "type": "array",
       "description": "The findings of the check and of the run that are about the scenario (code scenario-...), as in `run --json`; and control-link-late-values (an ECU's values came later than promised: what such a run recorded may differ from run to run) with its severity and code only, the rest null. No other finding: nothing of the run's pace in real time.",
@@ -929,6 +960,60 @@
                   "null"
                 ],
                 "description": "The time of the oldest point that stayed, of the points that can go (all of a sampled series; of a written series those of a ramp or a wave)."
+              }
+            }
+          }
+        },
+        "events_per_participant": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Present when --record-events is enabled: the most ECU events kept per participant; omitted otherwise."
+        },
+        "events_total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Present when --record-events is enabled: the most ECU events kept across all participants together; omitted otherwise."
+        },
+        "events_dropped": {
+          "type": "array",
+          "description": "Present when --record-events is enabled: participants that lost ECU events at the timeline limits or inside their Agent queue; empty if none did; omitted otherwise.",
+          "items": {
+            "type": "object",
+            "required": [
+              "participant",
+              "dropped",
+              "dropped_from_ms",
+              "dropped_before_ms",
+              "agent_dropped"
+            ],
+            "properties": {
+              "participant": {
+                "type": "string",
+                "description": "The participant whose events were dropped."
+              },
+              "dropped": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many older events were evicted by the timeline limits."
+              },
+              "dropped_from_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "The virtual time of the oldest event evicted by the timeline limits; null if dropped is 0."
+              },
+              "dropped_before_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "The virtual time of the oldest event that stayed for this participant; null if dropped is 0 or none stayed."
+              },
+              "agent_dropped": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many events the participant's control Agent dropped before they reached the Hub, when reported by the transport (SIL Kit wire v2 currently reports 0)."
               }
             }
           }

@@ -574,6 +574,8 @@ def test_after_scenario_recording_end_ms_and_handover_state_contracts() -> None:
         C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "record": ["Engine.engine.mode"]})
     with pytest.raises(ValidationError):
         C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "record_after_fail_ms": 300})
+    with pytest.raises(ValidationError):
+        C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "record_events": True})
 
     rec_req = C.RunRequest.model_validate({"file": "a.yaml", "record": ["Engine.engine.mode", "Dashboard.speed"]})
     assert rec_req.record == ["Engine.engine.mode", "Dashboard.speed"]
@@ -604,6 +606,19 @@ def test_after_scenario_recording_end_ms_and_handover_state_contracts() -> None:
     ):
         with pytest.raises(ValidationError):
             C.RunRequest.model_validate(bad_tail)
+
+    ev_req = C.RunRequest.model_validate({"file": "a.yaml", "record_events": True})
+    assert ev_req.record_events is True
+    assert C.CheckFileRequest.model_validate({"file": "a.yaml", "record_events": False}).record_events is False
+    assert C.SessionIntentSummary.model_validate({"record_events": True}).record_events is True
+    for bad_ev in (
+        {"file": "a.yaml", "record_events": None},
+        {"file": "a.yaml", "record_events": 1},
+        {"file": "a.yaml", "record_events": 0},
+        {"file": "a.yaml", "record_events": "true"},
+    ):
+        with pytest.raises(ValidationError):
+            C.RunRequest.model_validate(bad_ev)
 
     base_rec = {
         "run_id": "1",

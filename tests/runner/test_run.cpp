@@ -366,6 +366,80 @@ TEST_CASE(a_timeline_that_dropped_points_or_was_not_written_is_said)
                "room on the disk, or name another file with --timeline, and run again\n");
 }
 
+TEST_CASE(a_timeline_that_dropped_ecu_events_emits_timeline_limit_note)
+{
+    Scenario scenario;
+    scenario.variables.resize(1);
+    scenario.steps.resize(1);
+    scenario.steps[0].conditions.resize(1);
+
+    // 1. Events evicted at timeline limits alone -> timeline-limit note naming limits.events_dropped.
+    {
+        TimelineLimits lim;
+        lim.events_per_participant = 2;
+        lim.events_total = 10;
+        auto rec = std::make_shared<TimelineRecord>(scenario, lim);
+        rec->enable_events();
+        for (int i = 0; i < 5; ++i)
+        {
+            rec->event("Engine", SimTime{std::chrono::milliseconds(10 * i)}, control::EventLevel::Info,
+                       "ev " + std::to_string(i));
+        }
+        rec->close(SimTime{std::chrono::milliseconds(100)});
+        CHECK_EQ(rec->dropped_events(), std::uint64_t{3});
+        CHECK(rec->dropped_any());
+
+        RunOutcome o = passed_run();
+        o.scenario.timeline = "out/events.json";
+        o.scenario.timeline_record = rec;
+        const std::string out = lines(assess_run(o));
+        CHECK(out.find("N 0 timeline-limit:") != std::string::npos);
+        CHECK(out.find("3 events were dropped") != std::string::npos);
+        CHECK(out.find("limits.events_dropped") != std::string::npos);
+    }
+
+    // 2. Agent-dropped events alone also trigger timeline-limit note.
+    {
+        auto rec = std::make_shared<TimelineRecord>(scenario);
+        rec->enable_events();
+        rec->note_agent_events_dropped("Engine", 1);
+        rec->close(SimTime{std::chrono::milliseconds(100)});
+        CHECK_EQ(rec->dropped_events(), std::uint64_t{1});
+
+        RunOutcome o = passed_run();
+        o.scenario.timeline = "out/events.json";
+        o.scenario.timeline_record = rec;
+        const std::string out = lines(assess_run(o));
+        CHECK(out.find("N 0 timeline-limit:") != std::string::npos);
+        CHECK(out.find("1 event was dropped") != std::string::npos);
+    }
+
+    // 3. Both points and events dropped -> combined timeline-limit note naming both limits.dropped and limits.events_dropped.
+    {
+        TimelineLimits lim;
+        lim.points_per_series = 2;
+        lim.points_total = 100;
+        lim.events_per_participant = 1;
+        lim.events_total = 10;
+        auto rec = std::make_shared<TimelineRecord>(scenario, lim);
+        rec->enable_events();
+        for (int i = 0; i < 4; ++i)
+        {
+            rec->sampled(0, SimTime{std::chrono::milliseconds(10 * i)}, control::Value{std::int64_t{i}});
+            rec->event("Engine", SimTime{std::chrono::milliseconds(10 * i)}, control::EventLevel::Warning,
+                       "w " + std::to_string(i));
+        }
+        rec->close(SimTime{std::chrono::milliseconds(100)});
+        RunOutcome o = passed_run();
+        o.scenario.timeline = "out/both.json";
+        o.scenario.timeline_record = rec;
+        const std::string out = lines(assess_run(o));
+        CHECK(out.find("N 0 timeline-limit:") != std::string::npos);
+        CHECK(out.find("2 older points and 3 ECU events were dropped") != std::string::npos);
+        CHECK(out.find("limits.dropped and limits.events_dropped") != std::string::npos);
+    }
+}
+
 TEST_CASE(what_is_settled_before_the_participants_end_is_in_the_findings_of_the_end)
 {
     // What the launcher knows when the simulation is over, with Engine and Brake still running...

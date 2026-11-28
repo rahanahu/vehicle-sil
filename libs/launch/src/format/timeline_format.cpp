@@ -519,7 +519,36 @@ void write_step_lines(JsonWriter& w, const TimelineInput& input, std::size_t ste
     w.end_array();
 }
 
-void write_limits(JsonWriter& w, const TimelineInput& input)
+const char* event_level_name(control::EventLevel level)
+{
+    switch (level)
+    {
+    case control::EventLevel::Info: return "info";
+    case control::EventLevel::Warning: return "warning";
+    case control::EventLevel::Error: return "error";
+    }
+    return "info";
+}
+
+void write_events(JsonWriter& w, const TimelineInput& input)
+{
+    w.begin_array("events");
+    if (input.record != nullptr)
+    {
+        for (const scenario::TimelineRecord::Event& ev : input.record->events())
+        {
+            w.begin_object();
+            write_ms(w, "at_ms", ev.at);
+            w.string("participant", ev.participant);
+            w.string("level", event_level_name(ev.level));
+            w.string("text", ev.text);
+            w.end_object();
+        }
+    }
+    w.end_array();
+}
+
+void write_limits(JsonWriter& w, const TimelineInput& input, bool include_events)
 {
     const scenario::TimelineLimits limits = input.record != nullptr ? input.record->limits() : scenario::TimelineLimits{};
     w.begin_object("limits");
@@ -543,6 +572,26 @@ void write_limits(JsonWriter& w, const TimelineInput& input)
         }
     }
     w.end_array();
+    if (include_events)
+    {
+        w.integer("events_per_participant", static_cast<std::int64_t>(limits.events_per_participant));
+        w.integer("events_total", static_cast<std::int64_t>(limits.events_total));
+        w.begin_array("events_dropped");
+        if (input.record != nullptr)
+        {
+            for (const scenario::TimelineRecord::EventDrop& drop : input.record->events_dropped())
+            {
+                w.begin_object();
+                w.string("participant", drop.participant);
+                w.integer("dropped", static_cast<std::int64_t>(drop.dropped));
+                write_ms(w, "dropped_from_ms", drop.dropped_from);
+                write_ms(w, "dropped_before_ms", drop.dropped_before);
+                w.integer("agent_dropped", static_cast<std::int64_t>(drop.agent_dropped));
+                w.end_object();
+            }
+        }
+        w.end_array();
+    }
     w.end_object();
 }
 
@@ -613,8 +662,13 @@ std::string format_timeline_json(const TimelineInput& input)
         }
     }
     w.end_array();
+    const bool include_events = input.record_events || (input.record != nullptr && input.record->events_enabled());
     write_series(w, input);
     write_lines(w, input);
+    if (include_events)
+    {
+        write_events(w, input);
+    }
     w.begin_array("findings");
     for (const config::Finding& finding : input.findings)
     {
@@ -641,7 +695,7 @@ std::string format_timeline_json(const TimelineInput& input)
         w.end_object();
     }
     w.end_array();
-    write_limits(w, input);
+    write_limits(w, input, include_events);
     w.end_object();
     return w.take() + "\n";
 }

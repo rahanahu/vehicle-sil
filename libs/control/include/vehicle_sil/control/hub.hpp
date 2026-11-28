@@ -19,6 +19,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -360,7 +361,7 @@ public:
     /// agent none of whose variables report are ignored). A variable map does not touch it: the
     /// seen schema has the same variables in the same order.
     void agent_availability(ConnectionId connection, std::uint64_t version, std::vector<Availability> states);
-    void agent_events(ConnectionId connection, const std::vector<Event>& events);
+    void agent_events(ConnectionId connection, const std::vector<Event>& events, std::uint64_t agent_dropped = 0);
 
     // ---- client side ----------------------------------------------------------------------
 
@@ -408,6 +409,18 @@ public:
     /// control_silkit::HubTransport the whole simulation waits for it. Once this returns, the tap
     /// set before is not running and is not called again.
     void set_values_tap(ValuesTap tap);
+
+    /// Every batch of structured events the hub takes from an agent, as it takes it: `participant`,
+    /// the incarnation, the events in step order, and `agent_dropped` (events dropped by the agent
+    /// before reaching the hub, if reported; 0 otherwise).
+    using EventsTap = std::function<void(const std::string& participant, const std::string& incarnation,
+                                         std::span<const Event> events, std::uint64_t agent_dropped)>;
+    /// Sets the one events tap of the hub (empty: none): it is called for every batch that
+    /// agent_events() takes from the peer's current connection, in the order taken, on the thread
+    /// of the transport that brings it and under the hub's lock. It must be short, must not wait
+    /// and must not call the hub: with control_silkit::HubTransport the whole simulation waits for
+    /// it. Once this returns, the tap set before is not running and is not called again.
+    void set_events_tap(EventsTap tap);
 
 private:
     struct PeerEntry
@@ -486,6 +499,7 @@ private:
     std::set<std::uint64_t> open_;
     std::vector<std::weak_ptr<Subscription>> subscriptions_;
     ValuesTap values_tap_;
+    EventsTap events_tap_;
     std::map<std::string, VariableMap, std::less<>> variable_maps_;
 };
 

@@ -2722,4 +2722,120 @@ TEST_CASE(manual_timeline_record_and_json_format_without_scenario)
     emptyIn.findings.clear();
     const std::string emptyJson = format_timeline_json(emptyIn);
     CHECK(emptyJson.find("  \"scenario\": null,\n  \"recorded_to_ms\": null,\n") != std::string::npos);
+    CHECK(emptyJson.find("\"events\"") == std::string::npos);
+    CHECK(emptyJson.find("\"events_per_participant\"") == std::string::npos);
+}
+
+TEST_CASE(timeline_record_events_bounded_eviction_truncation_and_json_format)
+{
+    // 1. Default record has events disabled: event() is a no-op and JSON omits events keys completely.
+    {
+        TimelineRecord off(std::span<const RecordedVariable>{});
+        CHECK(!off.events_enabled());
+        off.event("Engine", at(10ms), control::EventLevel::Info, "ignored");
+        off.note_agent_events_dropped("Engine", 2);
+        off.close(at(100ms));
+        CHECK(off.events().empty());
+        CHECK(off.events_dropped().empty());
+        CHECK(!off.dropped_any());
+
+        TimelineInput in;
+        in.file = "sim.yaml";
+        in.time_step_ms = 10;
+        in.record = &off;
+        const std::string json = format_timeline_json(in);
+        CHECK(json.find("\"events\"") == std::string::npos);
+        CHECK(json.find("\"events_per_participant\"") == std::string::npos);
+        CHECK(json.find("\"events_total\"") == std::string::npos);
+        CHECK(json.find("\"events_dropped\"") == std::string::npos);
+    }
+
+    // 2. Per-participant cap, total cap (largest participant evicted first), cutoff truncation at close(to),
+    //    deterministic ordering by (at, participant, seq), and agent_dropped accounting.
+    {
+        TimelineLimits lim;
+        lim.events_per_participant = 3;
+        lim.events_total = 4;
+        TimelineRecord rec(std::span<const RecordedVariable>{}, lim);
+        rec.enable_events();
+        // Engine gets 5 events before cutoff + 1 after cutoff (100ms):
+        rec.event("Engine", at(10ms), control::EventLevel::Info, "e10");
+        rec.event("Engine", at(20ms), control::EventLevel::Info, "e20");
+        rec.event("Engine", at(30ms), control::EventLevel::Warning, "e30");
+        rec.event("Engine", at(40ms), control::EventLevel::Error, "e40");
+        rec.event("Engine", at(50ms), control::EventLevel::Info, "e50");
+        rec.event("Engine", at(120ms), control::EventLevel::Info, "e120-after-cutoff");
+        // Dashboard gets 2 events (including one at same timestamp 40ms as Engine) + 1 after cutoff:
+        rec.event("Dashboard", at(40ms), control::EventLevel::Info, "d40");
+        rec.event("Dashboard", at(60ms), control::EventLevel::Warning, "d60");
+        rec.event("Dashboard", at(110ms), control::EventLevel::Error, "d110-after-cutoff");
+        rec.note_agent_events_dropped("Dashboard", 2);
+
+        rec.close(at(100ms));
+        // Further events after close() are ignored.
+        rec.event("Engine", at(70ms), control::EventLevel::Info, "late");
+
+        // After truncation <= 100ms: Engine had 5 (capped to 3 by per-part -> drops e10, e20), Dashboard had 2.
+        // Total = 5 > events_total (4) -> largest participant (Engine, 3 > 2) drops 1 more (e30) -> keeps e40, e50!
+        // Final kept (4 total): Dashboard@40, Engine@40, Engine@50, Dashboard@60 (ordered by at, participant, seq).
+        CHECK_EQ(rec.events().size(), std::size_t{4});
+        CHECK(rec.events()[0].participant == "Dashboard");
+        CHECK(rec.events()[0].at == at(40ms));
+        CHECK(rec.events()[0].text == "d40");
+        CHECK(rec.events()[1].participant == "Engine");
+        CHECK(rec.events()[1].at == at(40ms));
+        CHECK(rec.events()[1].text == "e40");
+        CHECK(rec.events()[2].participant == "Engine");
+        CHECK(rec.events()[2].at == at(50ms));
+        CHECK(rec.events()[2].text == "e50");
+        CHECK(rec.events()[3].participant == "Dashboard");
+        CHECK(rec.events()[3].at == at(60ms));
+        CHECK(rec.events()[3].text == "d60");
+
+        // Drops sorted by participant: Dashboard (0 evicted, 2 agent_dropped), Engine (3 evicted: [10ms, 40ms), 0 agent_dropped).
+        CHECK_EQ(rec.events_dropped().size(), std::size_t{2});
+        CHECK(rec.events_dropped()[0].participant == "Dashboard");
+        CHECK_EQ(rec.events_dropped()[0].dropped, std::uint64_t{0});
+        CHECK(!rec.events_dropped()[0].dropped_from.has_value());
+        CHECK(!rec.events_dropped()[0].dropped_before.has_value());
+        CHECK_EQ(rec.events_dropped()[0].agent_dropped, std::uint64_t{2});
+        CHECK(rec.events_dropped()[1].participant == "Engine");
+        CHECK_EQ(rec.events_dropped()[1].dropped, std::uint64_t{3});
+        CHECK(rec.events_dropped()[1].dropped_from == std::optional<SimTime>(at(10ms)));
+        CHECK(rec.events_dropped()[1].dropped_before == std::optional<SimTime>(at(40ms)));
+        CHECK_EQ(rec.events_dropped()[1].agent_dropped, std::uint64_t{0});
+        CHECK_EQ(rec.dropped_events(), std::uint64_t{5});
+        CHECK(rec.dropped_any());
+
+        TimelineInput in;
+        in.file = "sim.yaml";
+        in.time_step_ms = 10;
+        in.record = &rec;
+        in.record_events = true;
+        const std::string json = format_timeline_json(in);
+        CHECK(json.find("  \"events\": [\n    {\n      \"at_ms\": 40,\n      \"participant\": \"Dashboard\",\n"
+                        "      \"level\": \"info\",\n      \"text\": \"d40\"\n    },\n"
+                        "    {\n      \"at_ms\": 40,\n      \"participant\": \"Engine\",\n"
+                        "      \"level\": \"error\",\n      \"text\": \"e40\"\n    },") != std::string::npos);
+        CHECK(json.find("    \"events_per_participant\": 3,\n    \"events_total\": 4,\n    \"events_dropped\": [\n"
+                        "      {\n        \"participant\": \"Dashboard\",\n        \"dropped\": 0,\n"
+                        "        \"dropped_from_ms\": null,\n        \"dropped_before_ms\": null,\n"
+                        "        \"agent_dropped\": 2\n      },\n"
+                        "      {\n        \"participant\": \"Engine\",\n        \"dropped\": 3,\n"
+                        "        \"dropped_from_ms\": 10,\n        \"dropped_before_ms\": 40,\n"
+                        "        \"agent_dropped\": 0\n      }\n    ]") != std::string::npos);
+    }
+
+    // 3. Not-started run (record == nullptr) with record_events == true still emits empty events & limits.events_*.
+    {
+        TimelineInput in;
+        in.file = "sim.yaml";
+        in.time_step_ms = 10;
+        in.record = nullptr;
+        in.record_events = true;
+        const std::string json = format_timeline_json(in);
+        CHECK(json.find("  \"events\": [],\n") != std::string::npos);
+        CHECK(json.find("    \"events_per_participant\": 2000,\n    \"events_total\": 5000,\n    \"events_dropped\": []\n") !=
+              std::string::npos);
+    }
 }

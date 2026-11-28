@@ -93,6 +93,8 @@ interface RunChoices {
   record?: string[];
   /** 失敗後の追加記録（仮想時間 ms。古い持ち越しにはない）。 */
   recordAfterFailMs?: string;
+  /** 仮想時刻付き ECU イベントを記録するか（古い持ち越しにはない）。 */
+  recordEvents?: boolean;
   speed: Speed;
   stopAt?: string;
   stopAtEdited?: boolean;
@@ -128,6 +130,7 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !(v['manual'] === undefined || (Array.isArray(v['manual']) && v['manual'].every(isText))) ||
     !(v['record'] === undefined || (Array.isArray(v['record']) && v['record'].every(isText))) ||
     !(v['recordAfterFailMs'] === undefined || typeof v['recordAfterFailMs'] === 'string') ||
+    !(v['recordEvents'] === undefined || typeof v['recordEvents'] === 'boolean') ||
     !speedOk ||
     !(v['variant'] === undefined || v['variant'] === null || isText(v['variant'])) ||
     !(v['scenario'] === undefined || v['scenario'] === null || isText(v['scenario'])) ||
@@ -658,6 +661,16 @@ export class RunPage {
   protected readonly recordAfterFailSupported = computed(
     () => this.app.hasValue() && this.app.value().launcher.features.includes('record-after-fail'),
   );
+  /** ランチャーが仮想時刻付き ECU イベント記録（`record-events`）に対応しているか。 */
+  protected readonly recordEventsSupported = computed(
+    () => this.app.hasValue() && this.app.value().launcher.features.includes('record-events'),
+  );
+  /** 仮想時刻付き ECU イベント記録チェックボックスを表示し、`intent.record_events` を送れるか。 */
+  protected readonly recordEventsAvailable = computed(
+    () =>
+      this.recordEventsSupported() &&
+      (this.chosenScenario() !== null || this.manualTimelineSupported()),
+  );
   /** 失敗後の追加記録（仮想時間 ms）。空欄で無効。 */
   private readonly recordAfterFailSource = computed(
     () => {
@@ -753,6 +766,37 @@ export class RunPage {
   protected readonly sessionRecordSignals = computed<readonly string[]>(
     () => this.session()?.intent?.record ?? [],
   );
+  /** 仮想時刻付き ECU イベントを記録するか（既定はオフ。構成ファイル切替で初期化）。 */
+  private readonly recordEventsSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      const carried = this.carriedFor(session?.id ?? null);
+      return {
+        file,
+        id: session?.id ?? null,
+        value:
+          carried && carried.file === file && carried.recordEvents !== undefined
+            ? carried.recordEvents
+            : session && session.file === file && session.intent?.record_events === true
+              ? true
+              : false,
+      };
+    },
+    {
+      equal: (a, b) => a.file === b.file && a.id === b.id && a.value === b.value,
+    },
+  );
+  protected readonly recordEvents = linkedSignal<
+    { file: string | null; id: string | null; value: boolean },
+    boolean
+  >({
+    source: this.recordEventsSource,
+    computation: ({ value }) => value,
+  });
+  protected readonly sessionRecordEvents = computed<boolean>(
+    () => this.session()?.intent?.record_events === true,
+  );
   private readonly afterScenarioSource = computed(
     () => {
       const file = this.selected();
@@ -844,6 +888,7 @@ export class RunPage {
       const record = this.recordSignalsAvailable() ? this.recordedSignalsList() : [];
       const recordAfterFail =
         scenario !== null && this.recordAfterFailSupported() ? this.recordAfterFailMs().trim() : '';
+      const recordEvents = this.recordEventsAvailable() && this.recordEvents();
       const speed = this.speed();
       const paused = scenario === null && this.startPaused();
       const connect = this.connectToSend();
@@ -860,6 +905,7 @@ export class RunPage {
         ...(recordAfterFail !== '' && !this.recordAfterFailInvalid()
           ? { record_after_fail_ms: Number(recordAfterFail) }
           : {}),
+        ...(recordEvents ? { record_events: true } : {}),
         ...(speed !== null ? { speed } : {}),
         ...(!pauseAfter && !this.stopAtInvalid() && stopAt !== ''
           ? { stop_at_ms: Number(stopAt) }
@@ -1124,6 +1170,7 @@ export class RunPage {
         manual: [...this.manual()],
         record: this.recordedSignalsList(),
         recordAfterFailMs: this.recordAfterFailMs(),
+        recordEvents: this.recordEvents(),
         speed: this.speed(),
         stopAt: this.stopAt(),
         stopAtEdited: this.stopAtEdited(),
@@ -1155,6 +1202,7 @@ export class RunPage {
           after_scenario,
           record,
           record_after_fail_ms,
+          record_events,
           speed,
           start_paused,
           stop_at_ms,
@@ -1169,6 +1217,7 @@ export class RunPage {
           after_scenario,
           record,
           record_after_fail_ms,
+          record_events,
           speed,
           start_paused,
           stop_at_ms,
@@ -1190,6 +1239,7 @@ export class RunPage {
         after_scenario: undefined,
         record: undefined,
         record_after_fail_ms: undefined,
+        record_events: undefined,
         speed: undefined,
         start_paused: undefined,
         stop_at_ms: undefined,

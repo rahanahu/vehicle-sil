@@ -19,6 +19,7 @@ function makeLoadDetail(
     end: 977.6,
     recordedTo: 640,
     stepCount: 10,
+    eventCount: 0,
     failure: {
       step: 10,
       at: 640,

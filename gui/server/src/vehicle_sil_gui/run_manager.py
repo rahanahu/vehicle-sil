@@ -542,7 +542,10 @@ class RunManager:
                     why_not = f"the file with the control server's credentials could not be made ({e})"
             if FEATURE_TIMELINE in self.launcher.features and (
                 r.scenario is not None
-                or (bool(r.intent.get("record")) and FEATURE_MANUAL_TIMELINE in self.launcher.features)
+                or (
+                    (bool(r.intent.get("record")) or bool(r.intent.get("record_events")))
+                    and FEATURE_MANUAL_TIMELINE in self.launcher.features
+                )
             ):
                 timeline = await process.run_thread_reclaimable(self.timelines.new_file, control.remove)
                 stack.callback(control.remove, timeline)

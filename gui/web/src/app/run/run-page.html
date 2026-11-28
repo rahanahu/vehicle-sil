@@ -252,6 +252,11 @@
                 <code lang="en">{{ tailMs }}</code>
               </p>
             }
+            @if (sessionRecordEvents()) {
+              <p class="file record-session" data-testid="session-record-events" i18n>
+                仮想時刻付き ECU イベントを記録
+              </p>
+            }
           } @else if (scenarios.hasValue()) {
             <mat-form-field class="picker picker-gap" subscriptSizing="dynamic">
               <mat-label i18n>シナリオ</mat-label>
@@ -421,6 +426,17 @@
                 失敗後の追加記録は 1 から 600000 までの整数にしてください。
               </p>
             }
+          }
+          @if (!running() && recordEventsAvailable()) {
+            <mat-checkbox
+              class="record-events"
+              data-testid="record-events"
+              [checked]="recordEvents()"
+              [disabled]="running()"
+              (change)="recordEvents.set($event.checked)"
+              i18n
+              >仮想時刻付き ECU イベントを記録</mat-checkbox
+            >
           }
           @if (!running() && recordSignalsAvailable()) {
             <app-record-signals

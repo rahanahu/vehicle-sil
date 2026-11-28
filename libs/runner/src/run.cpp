@@ -433,9 +433,10 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
             });
         detail::attach_controller(ctx_.commands, *connection->controller, ctx_.plan.timing.time_step_ms, ctx_.plan.timing.speed);
         // Every sample the hub takes, in every run: for the traffic of the result, and for
-        // the scenario.
+        // the scenario; opt-in structured ECU events when --timeline and --record-events are set.
+        const bool tap_events = !ctx_.plan.timeline.empty() && ctx_.plan.record_events;
         samples_.tap(control_.hub(), std::chrono::milliseconds(ctx_.plan.timing.time_step_ms),
-                     [c = connection->controller.get()] { return c->runtime().now(); });
+                     [c = connection->controller.get()] { return c->runtime().now(); }, tap_events);
         if (ctx_.scenario != nullptr)
         {
             // The scenario decides at every step of the controller, from the one at 0 on.
@@ -512,16 +513,33 @@ std::string RunnerImpl::write_timeline(const std::string& text)
         return outcome_.scenario.timeline_error;
     }
     const std::uint64_t dropped = outcome_.scenario.timeline_record ? outcome_.scenario.timeline_record->dropped() : 0;
-    out_.say("timeline: " + outcome_.scenario.timeline +
-             (dropped > 0 ? " (without " + std::to_string(dropped) + (dropped == 1 ? " older point" : " older points") +
-                                ", dropped at its limits: limits.dropped in the file)"
-                          : ""));
+    const std::uint64_t dropped_events =
+        outcome_.scenario.timeline_record ? outcome_.scenario.timeline_record->dropped_events() : 0;
+    std::string note;
+    if (dropped > 0 && dropped_events > 0)
+    {
+        note = " (without " + std::to_string(dropped) + (dropped == 1 ? " older point" : " older points") + " and " +
+               std::to_string(dropped_events) + (dropped_events == 1 ? " ECU event" : " ECU events") +
+               ", dropped at its limits: limits.dropped and limits.events_dropped in the file)";
+    }
+    else if (dropped > 0)
+    {
+        note = " (without " + std::to_string(dropped) + (dropped == 1 ? " older point" : " older points") +
+               ", dropped at its limits: limits.dropped in the file)";
+    }
+    else if (dropped_events > 0)
+    {
+        note = " (without " + std::to_string(dropped_events) + (dropped_events == 1 ? " ECU event" : " ECU events") +
+               ", dropped at its limits: limits.events_dropped in the file)";
+    }
+    out_.say("timeline: " + outcome_.scenario.timeline + note);
     return {};
 }
 
 bool RunnerImpl::open_timeline()
 {
-    if (ctx_.plan.timeline.empty() || (ctx_.scenario == nullptr && ctx_.plan.recorded_variables.empty()))
+    if (ctx_.plan.timeline.empty() ||
+        (ctx_.scenario == nullptr && ctx_.plan.recorded_variables.empty() && !ctx_.plan.record_events))
     {
         return true;
     }

@@ -466,6 +466,10 @@ void Agent::on_step_begin(SimTime now)
             std::swap(a, b);
         }
     }
+    // Advance last_step_ before invoking variable setters so Agent::log() called inside a setter
+    // (e.g. ecu.connected bus disconnect/reconnect) stamps the step in which the write takes effect.
+    // Parameter-write rejection still checks stepped_ (true only from the second step onward).
+    last_step_ = now;
     traceBegin.set_arg(due_.size());
     for (auto& due : due_)
     {
@@ -473,13 +477,12 @@ void Agent::on_step_begin(SimTime now)
         apply(due.command, now, due.late);
     }
     due_.clear();
-    last_step_ = now;
     stepped_.store(true, std::memory_order_release);
 }
 
 void Agent::apply(Pending& command, SimTime now, bool late)
 {
-    if (command.writes_parameter && last_step_)
+    if (command.writes_parameter && stepped_.load(std::memory_order_relaxed))
     {
         stats_.rejected.fetch_add(1, std::memory_order_relaxed);
         push_result({command.seq, CommandStatus::Rejected, std::nullopt, late, "a parameter is writable only before the first step", 0U});

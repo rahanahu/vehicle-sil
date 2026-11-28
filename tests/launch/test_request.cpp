@@ -32,8 +32,8 @@ using namespace std::chrono_literals;
 constexpr const char* kParamNeedsScenario = "--param sets a parameter of a scenario: give --scenario <file> too, or leave "
                                             "--param out";
 constexpr const char* kTimelineNeedsScenarioOrRecord =
-    "--timeline needs --scenario or --record: give --scenario <file> or at least one --record "
-    "<participant>.<variable>, or leave --timeline out";
+    "--timeline needs --scenario, --record or --record-events: give --scenario <file>, at least one --record "
+    "<participant>.<variable>, or --record-events, or leave --timeline out";
 constexpr const char* kScenarioNotPaused = "--scenario cannot be used with --start-paused: the scenario writes its values for "
                                            "0 before the first step and runs by itself; pause and step it with "
                                            "--stdin-commands or from a Control Server client (--control) if needed";
@@ -148,6 +148,9 @@ TEST_CASE(a_timeline_needs_a_scenario_or_record)
     CHECK(messages(r).empty());
     r.intent.scenario.reset();
     r.intent.record = {"A.level"};
+    CHECK(messages(r).empty());
+    r.intent.record.clear();
+    r.intent.record_events = true;
     CHECK(messages(r).empty());
 }
 
@@ -765,4 +768,25 @@ TEST_CASE(record_after_fail_ms_validation_and_plan_propagation)
     sc.scenario.emplace();
     const RunPlan plan = plan_run(check, &sc, "dir", choices);
     CHECK(plan.record_after_fail == std::optional<std::chrono::milliseconds>(300ms));
+}
+
+TEST_CASE(record_events_validation_and_plan_propagation)
+{
+    RunRequest r;
+    r.intent.record_events = true;
+    // Allowed on check and run (with or without scenario / --timeline), refused on test.
+    CHECK(messages(r, RequestCommand::Check).empty());
+    CHECK(messages(r, RequestCommand::Run).empty());
+    CHECK(messages(r, RequestCommand::Test) ==
+          list("test does not accept --record-events: run one simulation with vehicle_sil_launch run --record-events"));
+    r.host.timeline = "out.json";
+    CHECK(messages(r, RequestCommand::Run).empty());
+
+    const RunChoices choices = run_choices(r);
+    CHECK(choices.record_events);
+
+    Checked check;
+    check.config.emplace();
+    const RunPlan plan = plan_run(check, nullptr, "dir", choices);
+    CHECK(plan.record_events);
 }

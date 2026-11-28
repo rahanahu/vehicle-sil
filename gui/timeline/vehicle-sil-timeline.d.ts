@@ -14,7 +14,7 @@ export type VehicleSilTimelineMessages = Record<
 
 /** The parts of the element that `hide` can leave out. */
 export type VehicleSilTimelinePart =
-  'header' | 'summary' | 'toolbar' | 'help' | 'steps' | 'readout' | 'legend' | 'tables';
+  'header' | 'summary' | 'toolbar' | 'help' | 'steps' | 'events' | 'readout' | 'legend' | 'tables';
 
 /** One comparison in a step's watch condition (constant value or right-hand variable). */
 export interface VehicleSilTimelineComparison {
@@ -129,6 +129,8 @@ export interface VehicleSilTimelineLoadDetail {
   recordedTo: number | null;
   /** Number of scenario steps in the loaded timeline. */
   stepCount: number;
+  /** Number of recorded virtual-time ECU events in the loaded timeline. */
+  eventCount: number;
   /** Failure summary when the scenario failed, else null. */
   failure: VehicleSilTimelineLoadFailure | null;
   /** Variables present in the timeline with failure-relevance and activity flags. */
@@ -198,6 +200,8 @@ export interface VehicleSilTimelineElement extends HTMLElement {
   zoomOut(): void;
   /** Clears a pinned cursor and any Δt reference marker without changing zoom or step selection. */
   unpinCursor(): void;
+  /** Clamps and pins the cursor at `atMs` (scrolling into view if outside the zoom window) and emits `cursorchange`. */
+  pinCursor(atMs: number): boolean;
 
   addEventListener<K extends keyof VehicleSilTimelineEventMap>(
     type: K,

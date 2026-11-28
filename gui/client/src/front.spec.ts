@@ -2901,6 +2901,7 @@ describe('the front door', () => {
           after_scenario: 'pause',
           record: ['Dashboard.dashboard.engine_speed'],
           record_after_fail_ms: 300,
+          record_events: true,
         },
         { file: 'sim.yaml' },
       );
@@ -2912,6 +2913,7 @@ describe('the front door', () => {
         after_scenario: 'pause',
         record: ['Dashboard.dashboard.engine_speed'],
         record_after_fail_ms: 300,
+        record_events: true,
       });
       checkReq.flush({
         check: {
@@ -2936,6 +2938,7 @@ describe('the front door', () => {
           after_scenario: 'pause',
           record: ['Dashboard.dashboard.engine_speed'],
           record_after_fail_ms: 300,
+          record_events: true,
           speed: 'max',
         },
         { file: 'sim.yaml' },
@@ -2948,6 +2951,7 @@ describe('the front door', () => {
         after_scenario: 'pause',
         record: ['Dashboard.dashboard.engine_speed'],
         record_after_fail_ms: 300,
+        record_events: true,
         speed: 'max',
       });
       runReq.flush({ instance: 'x', run_id: '1' });

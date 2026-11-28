@@ -115,6 +115,7 @@ RunPlan plan_run(const config::CheckReport& check, const scenario::ScenarioCheck
     }
     plan.recorded_variables = choices.recorded_variables;
     plan.record_after_fail = choices.record_after_fail;
+    plan.record_events = choices.record_events;
     if (const scenario::Scenario* read = plan.scenario(); read != nullptr)
     {
         const std::span<const scenario::RecordedVariable> recordedForSampling =

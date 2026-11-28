@@ -113,10 +113,20 @@ public:
 private:
     class HubPort;
 
+    struct BufferedEvent
+    {
+        std::string participant;
+        control::Event event;
+    };
+
     void mark_over();
     void note_step(const scenario::ScenarioStepRun& step);
-    /// Gives the engine the samples that have arrived since the last call.
-    void drain();
+    /// Gives the engine the samples (and the record any ECU events strictly before `before`, or all
+    /// if `before` is empty) that have arrived since the last call.
+    void drain(std::optional<SimTime> before);
+    /// Drains queued structured ECU events into pending_events_ and flushes events with time < *before
+    /// (or all pending events if `before` is empty) into the TimelineRecord (if enabled).
+    void drain_events(std::optional<SimTime> before);
     void loop(SimulationController& controller);
 
     const RunContext& ctx_;
@@ -134,6 +144,9 @@ private:
     /// run --timeline: what the engine notes (made in begin(), before the engine). Touched as
     /// engine_ is: the engine fills it; finish() gives it to the outcome.
     std::shared_ptr<scenario::TimelineRecord> record_;
+    /// Drained ECU events with time >= the current controller tick, held until a later tick so the
+    /// scenario's `< p` virtual-time boundary matches ScenarioEngine::observe(p). Touched as engine_ is.
+    std::vector<BufferedEvent> pending_events_;
     std::unique_ptr<scenario::ScenarioEngine> engine_; ///< the window's thread, then the scenario's, then main
     /// begin() found these and made no engine (the scenario does not begin). Touched as engine_ is.
     std::vector<ScenarioNotObserved> not_observed_;

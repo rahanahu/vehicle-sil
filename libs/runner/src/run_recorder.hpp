@@ -38,10 +38,11 @@ public:
     {
     }
 
-    /// True when this run records a manual timeline (no scenario, --timeline set, --record non-empty).
+    /// True when this run records a manual timeline (no scenario, --timeline set, --record or --record-events).
     [[nodiscard]] bool active() const noexcept
     {
-        return ctx_.scenario == nullptr && !ctx_.plan.timeline.empty() && !ctx_.plan.recorded_variables.empty();
+        return ctx_.scenario == nullptr && !ctx_.plan.timeline.empty() &&
+               (!ctx_.plan.recorded_variables.empty() || ctx_.plan.record_events);
     }
 
     /// Called on the start window thread once control-link hellos have arrived: creates the
@@ -68,6 +69,7 @@ private:
     };
 
     void consume(std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> taken);
+    void consume_events(std::vector<RunSamples::EventBatch> batches);
 
     const RunContext& ctx_;
     RunControl& control_;

@@ -267,6 +267,11 @@ public:
     /// every ECU ("ecu.connected", the monitoring outputs); std::logic_error before the schema is
     /// complete (during the set-up: give the first state in the declaration instead).
     void set_availability(std::string_view name, control::Availability state);
+    /// Records a structured event stamped with this ECU's current simulation step time
+    /// (control::Agent::log()). Call from a step of this ECU (on_step(), every(), at(), a
+    /// handler); events are delivered to the control hub over the time-synced control link
+    /// (unlike stdout/stderr, which carry only wall-clock arrival times).
+    void log(control::EventLevel level, std::string_view text);
     /// The options of this ECU's agent (queue sizes, AgentOptions::sample_period). Before the
     /// agent is made: before the first input(), output() or agent() (std::logic_error
     /// afterwards, and once the run has started). std::invalid_argument for bad options
@@ -738,6 +743,11 @@ inline void Ecu::declare(const std::string& name, const std::function<void(contr
 inline void Ecu::set_availability(std::string_view name, control::Availability state)
 {
     ecu_agent().set_availability(name, state);
+}
+
+inline void Ecu::log(control::EventLevel level, std::string_view text)
+{
+    agent().log(level, std::string(text));
 }
 
 inline control::Agent& Ecu::agent()

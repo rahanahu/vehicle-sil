@@ -51,6 +51,14 @@ public:
     /// tap, on the controller's SIL Kit thread: it must not wait.
     using Now = std::function<SimTime()>;
 
+    /// One batch of virtual-timestamped structured ECU events received via Hub::set_events_tap().
+    struct EventBatch
+    {
+        std::string participant{};
+        std::vector<control::Event> events{};
+        std::uint64_t agent_dropped = 0;
+    };
+
     /// `names`: the participants in the order of the configuration (the places the samples are
     /// given under). `plan`: who is counted where.
     RunSamples(std::vector<std::string> names, TrafficPlan plan);
@@ -58,15 +66,16 @@ public:
     RunSamples(const RunSamples&) = delete;
     RunSamples& operator=(const RunSamples&) = delete;
 
-    /// Sets the tap on `hub`. `step`: the controller's step (> 0). Main thread, in the setup
+    /// Sets the tap on `hub`. `step`: the controller's step (> 0). `tap_events`: also attach
+    /// Hub::set_events_tap() for opt-in virtual-time ECU event recording. Main thread, in the setup
     /// (before the hub's transport brings anything). The hub and what `now` reads must live
     /// until untap().
-    void tap(control::Hub& hub, SimDuration step, Now now);
-    /// Takes the tap off (once it returns, the tap is not running and is not called again). Main
+    void tap(control::Hub& hub, SimDuration step, Now now, bool tap_events = false);
+    /// Takes the tap(s) off (once it returns, no tap is running or called again). Main
     /// thread; before the hub's transport and the controller go. Does nothing without a tap.
     void untap();
-    /// The tap is set (between tap() and untap()). Main thread.
-    [[nodiscard]] bool tapped() const { return tapped_; }
+    /// A tap is set (between tap() and untap()). Main thread.
+    [[nodiscard]] bool tapped() const { return tapped_ || events_tapped_; }
 
     /// From here on the scenario or manual timeline recorder gets samples: those the tap takes
     /// after this call, of the control agents `incarnations` names (per participant of the
@@ -78,12 +87,20 @@ public:
     void recording_begins(std::vector<std::string> incarnations) { scenario_begins(std::move(incarnations)); }
     /// Alias of scenario_ends() for manual-run timeline recording.
     void recording_ends() { scenario_ends(); }
+    /// From here on structured ECU events from all connected agents are queued for timeline recording.
+    void events_begins();
+    /// Stops queueing structured ECU events and clears any unread batches.
+    void events_ends();
     /// The scenario's or manual recorder's samples since the last call, in the order taken: the
     /// participant's place in the configuration, the sample.
     [[nodiscard]] std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> take();
     /// Atomically returns all remaining queued samples and stops queueing new ones (as take() +
     /// recording_ends() under one lock).
     [[nodiscard]] std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> take_and_end();
+    /// Structured ECU event batches received since the last call, in arrival order.
+    [[nodiscard]] std::vector<EventBatch> take_events();
+    /// Atomically returns all remaining queued event batches and stops queueing new ones.
+    [[nodiscard]] std::vector<EventBatch> take_events_and_end();
 
     /// The run ended at `end_ms` (RunTiming::sim_ms): the traffic, from each participant's last
     /// step that began before it; then the tap goes. Main thread, once.
@@ -107,8 +124,11 @@ private:
     std::vector<Kept> kept_;
     std::vector<std::string> scenario_; ///< per participant: the agent whose samples the scenario gets; empty: no scenario runs
     std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> queue_;
+    bool events_recording_ = false;
+    std::vector<EventBatch> event_queue_;
     // The main thread's:
     bool tapped_ = false;
+    bool events_tapped_ = false;
 };
 
 } // namespace vehicle_sil::runner::detail

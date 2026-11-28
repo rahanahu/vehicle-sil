@@ -141,6 +141,9 @@
     'manual.titleFile': ({ file }) => `Manual run (${file})`,
     'manual.recordedTo': ({ count, to }) =>
       `Recorded ${count} signal${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.recordedEventsTo': ({ count, to }) =>
+      `Recorded ${count} ECU event${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.recordedEmptyTo': ({ to }) => `No signals or ECU events recorded up to ${to}`,
     'manual.nothingRecorded': 'Manual run: no samples recorded',
     'fact.file': 'timeline file',
     'fact.scenario': 'scenario',
@@ -373,6 +376,34 @@
       `<vehicle-sil-timeline>: hide has "${value}", which is not a part, so it is ignored. The parts: ${known}.`,
     'warn.theme': ({ value }) =>
       `<vehicle-sil-timeline>: theme="${value}" is not light, dark or auto, so the colours follow the page (auto).`,
+
+    // --- virtual-time ECU events
+    'events.count': ({ shown, total }) =>
+      shown === total ? `ECU events (${total})` : `ECU events (${shown} / ${total})`,
+    'events.allParticipants': 'All participants',
+    'events.allLevels': 'All levels',
+    'events.filterParticipant': 'Filter ECU events by participant',
+    'events.filterLevel': 'Filter ECU events by level',
+    'events.searchPlaceholder': 'Filter events…',
+    'events.searchLabel': 'Filter ECU events by text',
+    'events.visibleOnly': 'Visible range only',
+    'events.noneMatching': 'No matching events.',
+    'events.truncated': ({ shown, total }) => `Showing first ${shown} of ${total} matching events.`,
+    'events.showAll': ({ count }) => `Show all (${count})`,
+    'events.colTime': 'Time',
+    'events.colDelta': 'Δt',
+    'events.colParticipant': 'Participant',
+    'events.colLevel': 'Level',
+    'events.colText': 'Event',
+    'events.pinRow': ({ at }) => `Pin cursor at ${at}`,
+    'events.stripLabel': 'ECU events',
+    'events.clusterLabel': ({ at, count }) => `${count} ECU events at ${at}`,
+    'events.droppedHeading': 'ECU events were dropped. ',
+    'events.droppedTimeline': ({ participant, count, from, to }) =>
+      `${participant}: ${count} dropped (${from} to ${to})`,
+    'events.droppedTimelineNoRange': ({ participant, count }) => `${participant}: ${count} dropped`,
+    'events.droppedAgent': ({ participant, count }) =>
+      `${participant}: ${count} dropped in ECU queue`,
   };
 
   const ja = {
@@ -498,6 +529,9 @@
     'manual.title': '手動実行',
     'manual.titleFile': ({ file }) => `手動実行（${file}）`,
     'manual.recordedTo': ({ count, to }) => `${count} 個の信号を ${to} まで記録しました`,
+    'manual.recordedEventsTo': ({ count, to }) =>
+      `${count} 件の ECU イベントを ${to} まで記録しました`,
+    'manual.recordedEmptyTo': ({ to }) => `${to} までに記録された信号や ECU イベントはありません`,
     'manual.nothingRecorded': '手動実行: 記録されたサンプルはありません',
     'fact.file': '時間の軸のファイル',
     'fact.scenario': 'シナリオ',
@@ -729,6 +763,35 @@
       `<vehicle-sil-timeline>: hide の「${value}」は部分の名前でないので、使いません。部分: ${known}。`,
     'warn.theme': ({ value }) =>
       `<vehicle-sil-timeline>: theme="${value}" は light、dark、auto のどれでもないので、色はページに従います（auto）。`,
+
+    // --- 仮想時刻付き ECU イベント
+    'events.count': ({ shown, total }) =>
+      shown === total ? `ECU イベント（${total}）` : `ECU イベント（${shown} / ${total}）`,
+    'events.allParticipants': 'すべての participant',
+    'events.allLevels': 'すべてのレベル',
+    'events.filterParticipant': 'participant で ECU イベントを絞り込み',
+    'events.filterLevel': 'レベルで ECU イベントを絞り込み',
+    'events.searchPlaceholder': 'イベントを絞り込み…',
+    'events.searchLabel': '文字で ECU イベントを絞り込み',
+    'events.visibleOnly': '表示範囲のみ',
+    'events.noneMatching': '条件に合うイベントがありません。',
+    'events.truncated': ({ shown, total }) =>
+      `一致した ${total} 件のうち先頭 ${shown} 件を表示しています。`,
+    'events.showAll': ({ count }) => `すべて表示（${count}）`,
+    'events.colTime': '時刻',
+    'events.colDelta': 'Δt',
+    'events.colParticipant': 'participant',
+    'events.colLevel': 'レベル',
+    'events.colText': '内容',
+    'events.pinRow': ({ at }) => `${at} にカーソルを固定`,
+    'events.stripLabel': 'ECU イベント',
+    'events.clusterLabel': ({ at, count }) => `${at} の ECU イベント ${count} 件`,
+    'events.droppedHeading': '一部の ECU イベントが欠けています。',
+    'events.droppedTimeline': ({ participant, count, from, to }) =>
+      `${participant}: ${count} 件欠落（${from}〜${to}）`,
+    'events.droppedTimelineNoRange': ({ participant, count }) => `${participant}: ${count} 件欠落`,
+    'events.droppedAgent': ({ participant, count }) =>
+      `${participant}: ECU 側キューで ${count} 件欠落`,
   };
 
   const MESSAGES = { en, ja };
@@ -819,6 +882,7 @@
 :host([hide~='help']) #help,
 :host([hide~='tables']) #tables,
 :host([hide~='steps']) :is(.lane.steps, #step-details),
+:host([hide~='events']) :is(.lane.ecu-events, #ecu-events),
 :host([hide~='readout']) :is(.readout, .hover-readout),
 :host([hide~='legend']) .legend .key {
   display: none !important;
@@ -1741,6 +1805,147 @@ tr.selected td {
 .var-label {
   font-weight: 600;
   margin-right: 6px;
+}
+/* virtual-time ECU events strip and synchronized correlation drawer */
+.lane.ecu-events {
+  border-top: 1px solid var(--_border);
+  border-bottom: none;
+}
+.lane.ecu-events .lane-head > div {
+  min-width: 0;
+  max-width: 100%;
+}
+.lane.ecu-events .readout {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ev-tick {
+  cursor: pointer;
+}
+.ev-tick line {
+  stroke-width: 2;
+}
+.ev-tick.ev-info {
+  color: var(--_sent);
+}
+.ev-tick.ev-warning {
+  color: var(--_warn);
+}
+.ev-tick.ev-error {
+  color: var(--_bad);
+}
+.ev-tick line {
+  stroke: currentColor;
+}
+.ev-tick .ev-dot {
+  fill: currentColor;
+  stroke: var(--_panel);
+  stroke-width: 1;
+}
+.ev-tick .ev-badge-bg {
+  fill: var(--_panel);
+  stroke: currentColor;
+  stroke-width: 1;
+}
+.ev-tick .ev-badge-txt {
+  fill: currentColor;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.ev-tick:focus-visible {
+  outline: 2px solid var(--_sent);
+  outline-offset: 1px;
+}
+#ecu-events {
+  margin-top: 10px;
+}
+.ecu-events-panel {
+  margin: 0;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: var(--_panel);
+  padding: 6px 10px;
+}
+.ecu-events-panel > summary {
+  padding: 2px 0;
+}
+.ecu-events-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 8px 0 6px;
+}
+.ecu-events-controls select,
+.ecu-events-controls input[type='search'] {
+  font: inherit;
+  color: var(--_fg);
+  background: var(--_bg);
+  border: 1px solid var(--_border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.ecu-events-controls input[type='search'] {
+  min-width: 140px;
+  flex: 1 1 160px;
+  max-width: 260px;
+}
+.ecu-events-visible-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ecu-events-wrap {
+  max-height: 240px;
+  overflow: auto;
+  border-top: 1px solid var(--_grid);
+}
+.ecu-events-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--_panel);
+  z-index: 1;
+}
+tr.ecu-event-row {
+  cursor: pointer;
+}
+tr.ecu-event-row:hover td {
+  background: var(--_bg);
+}
+tr.ecu-event-row.selected td,
+tr.ecu-event-row.active-at-cursor td {
+  background: var(--_selection);
+}
+tr.ecu-event-row:focus-visible {
+  outline: 2px solid var(--_sent);
+  outline-offset: -2px;
+}
+.ev-level {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.ev-level.ev-info {
+  color: var(--_sent);
+}
+.ev-level.ev-warning {
+  color: var(--_warn);
+}
+.ev-level.ev-error {
+  color: var(--_bad);
+}
+.ecu-events-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
 }
 `;
 })(globalThis);
@@ -2722,6 +2927,32 @@ tr.selected td {
       isObject(tl.limits) && Array.isArray(tl.limits.dropped)
         ? tl.limits.dropped.filter(isObject)
         : [];
+    const rawEvents = Array.isArray(tl.events) ? tl.events : [];
+    const events = [];
+    for (let i = 0; i < rawEvents.length; i++) {
+      const ev = rawEvents[i];
+      if (!isObject(ev) || !isNum(ev.at_ms)) continue;
+      const level = nonEmptyString(ev.level) ?? 'info';
+      events.push({
+        index: events.length,
+        atMs: ev.at_ms,
+        participant: typeof ev.participant === 'string' ? ev.participant : '',
+        level,
+        text: typeof ev.text === 'string' ? ev.text : '',
+      });
+      end = Math.max(end, ev.at_ms);
+    }
+    const eventsDropped =
+      isObject(tl.limits) && Array.isArray(tl.limits.events_dropped)
+        ? tl.limits.events_dropped.filter(
+            (d) =>
+              isObject(d) &&
+              ((isNum(d.dropped) && d.dropped > 0) ||
+                (isNum(d.agent_dropped) && d.agent_dropped > 0)),
+          )
+        : [];
+    const finalMargin = Math.max(timeStep ?? 0, end * 0.04, end > 0 ? 0 : 10);
+    const finalDomain = [0, end + finalMargin];
     return {
       tl,
       isManual,
@@ -2741,9 +2972,61 @@ tr.selected td {
       failure,
       findings,
       dropped,
+      events,
+      eventGroups: groupEventsByTime(events),
+      eventsDropped,
       late: findings.some((f) => f.code === 'control-link-late-values'),
-      domain,
+      domain: events.length > 0 ? finalDomain : domain,
     };
+  }
+
+  function eventSeverityRank(level) {
+    if (level === 'error') return 3;
+    if (level === 'warning') return 2;
+    return 1;
+  }
+
+  function eventSeverityClass(level) {
+    if (level === 'error' || level === 'warning' || level === 'info') return level;
+    return 'info';
+  }
+
+  /** Groups structured ECU events with identical virtual `atMs`, ordered by ascending `atMs`. */
+  function groupEventsByTime(events) {
+    const byAt = new Map();
+    for (const ev of events) {
+      let grp = byAt.get(ev.atMs);
+      if (!grp) {
+        grp = { atMs: ev.atMs, severity: eventSeverityClass(ev.level), events: [] };
+        byAt.set(ev.atMs, grp);
+      }
+      grp.events.push(ev);
+      if (eventSeverityRank(ev.level) > eventSeverityRank(grp.severity)) {
+        grp.severity = eventSeverityClass(ev.level);
+      }
+    }
+    return [...byAt.values()].sort((a, b) => a.atMs - b.atMs);
+  }
+
+  /** Filters structured ECU events by participant, level, text query, and optional visible zoom window. */
+  function filterEcuEvents(events, opts) {
+    const participant = opts?.participant || '';
+    const level = opts?.level || '';
+    const query = (opts?.query || '').trim().toLowerCase();
+    const visibleOnly = Boolean(opts?.visibleOnly);
+    const view = opts?.view;
+    return events.filter((ev) => {
+      if (participant && ev.participant !== participant) return false;
+      if (level && ev.level !== level) return false;
+      if (visibleOnly && Array.isArray(view) && view.length === 2) {
+        if (ev.atMs < view[0] - 1e-9 || ev.atMs > view[1] + 1e-9) return false;
+      }
+      if (query) {
+        const hay = `${ev.participant} ${ev.level} ${ev.text}`.toLowerCase();
+        if (!hay.includes(query)) return false;
+      }
+      return true;
+    });
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -3097,6 +3380,7 @@ tr.selected td {
       end: model.domain[1],
       recordedTo: model.recordedTo,
       stepCount: model.steps.length,
+      eventCount: model.events.length,
       failure: f
         ? {
             step: f.step.index,
@@ -3526,6 +3810,8 @@ tr.selected td {
     stepTitle,
     lineTitle,
     callStackFrames,
+    groupEventsByTime,
+    filterEcuEvents,
   };
 
   global.VehicleSilTimeline = api;
@@ -3593,6 +3879,10 @@ tr.selected td {
       refCursor: null,
       /** The index of the chosen step, or null. */
       step: null,
+      /** Active ECU event filter state (preserved across zoom/cursor/language redraws; reset on new file). */
+      eventFilter: { participant: '', level: '', query: '', visibleOnly: false, showAll: false },
+      /** Index of the explicitly selected ECU event row, or null. */
+      selectedEventIndex: null,
       readouts: [],
       width: 0,
       /** The name of the file shown (null for data without a name, or none). */
@@ -3688,6 +3978,14 @@ tr.selected td {
       state.pinned = false;
       state.pinnedCursor = null;
       state.refCursor = null;
+      state.eventFilter = {
+        participant: '',
+        level: '',
+        query: '',
+        visibleOnly: false,
+        showAll: false,
+      };
+      state.selectedEventIndex = null;
       const o = current.options;
       state.view = initialView(model);
       state.cursor = isNum(o.cursor) ? o.cursor : null;
@@ -3805,7 +4103,11 @@ tr.selected td {
     } else if (m.isManual) {
       const heading =
         m.recordedTo !== null
-          ? t('manual.recordedTo', { count: m.vars.length, to: fmtMs(m.recordedTo) })
+          ? m.vars.length === 0
+            ? m.events.length > 0
+              ? t('manual.recordedEventsTo', { count: m.events.length, to: fmtMs(m.recordedTo) })
+              : t('manual.recordedEmptyTo', { to: fmtMs(m.recordedTo) })
+            : t('manual.recordedTo', { count: m.vars.length, to: fmtMs(m.recordedTo) })
           : t('manual.nothingRecorded');
       parts.push(
         h(
@@ -4342,6 +4644,48 @@ tr.selected td {
     return true;
   }
 
+  /** Pins the cursor at `atMs` (clamped to domain), pans into view if outside the zoom window, and emits `cursorchange`. */
+  function pinCursorImpl(atMs, options) {
+    const m = state.model;
+    if (!m || !isNum(atMs)) return false;
+    const [d0, d1] = m.domain;
+    const clamped = Math.min(d1, Math.max(d0, atMs));
+    const prevCursor = state.cursor;
+    const wasPinned = state.pinned;
+    state.cursor = clamped;
+    state.pinned = true;
+    state.pinnedCursor = clamped;
+    if (options && 'eventIndex' in options) {
+      state.selectedEventIndex = options.eventIndex;
+    } else {
+      state.selectedEventIndex = null;
+    }
+    const [v0, v1] = state.view;
+    if (clamped < v0 || clamped > v1) {
+      const span = v1 - v0;
+      let t0 = clamped - span * 0.5;
+      let t1 = t0 + span;
+      if (t0 < d0) {
+        t0 = d0;
+        t1 = Math.min(d1, d0 + span);
+      } else if (t1 > d1) {
+        t1 = d1;
+        t0 = Math.max(d0, d1 - span);
+      }
+      setView([t0, Math.max(t1, t0 + 1e-9)]);
+    } else if (options?.flushedView) {
+      renderChart();
+      if (state.eventFilter.visibleOnly && m.events.length > 0) renderEcuEventsRows();
+      emit('viewchange', { from: v0, to: v1 });
+    } else {
+      updateCursor();
+    }
+    if (clamped !== prevCursor || !wasPinned) {
+      emit('cursorchange', { cursor: state.cursor });
+    }
+    return true;
+  }
+
   // --- the chart
 
   /** Shows a part of the run (clamped to it). noDraw: only set it (the caller draws). */
@@ -4355,6 +4699,7 @@ tr.selected td {
     state.view = [t0, t1];
     if (noDraw) return;
     renderChart();
+    if (state.eventFilter.visibleOnly && state.model.events.length > 0) renderEcuEventsRows();
     if (changed) emit('viewchange', { from: t0, to: t1 });
   }
 
@@ -4364,6 +4709,7 @@ tr.selected td {
     renderSummary(m);
     renderParticipants(m);
     renderTables(m);
+    renderEcuEventsChrome(m);
     renderChart();
   }
 
@@ -4492,6 +4838,7 @@ tr.selected td {
     }
     // Option A: shared-axis event lane sits BELOW the waveform lanes (and is omitted cleanly when steps is empty).
     if (m.steps.length > 0) children.push(stepLane(m, scale));
+    if (m.events.length > 0) children.push(eventsLane(m, scale));
     chart.replaceChildren(
       ...children,
       h('div', {
@@ -4806,6 +5153,376 @@ tr.selected td {
     return lane;
   }
 
+  const ECU_EVENTS_PAGE_LIMIT = 500;
+
+  /** Compact severity marker/tick strip aligned to the chart's virtual-time X scale. */
+  function eventsLane(m, scale) {
+    const height = 24;
+    const head = h(
+      'div',
+      {},
+      h('strong', { text: t('events.stripLabel') }),
+      h('div', { class: 'readout small', id: 'cursor-events' }),
+    );
+    const { lane, svg } = laneShell(head, height, scale, 'ecu-events');
+    commonBack(svg, m, scale, height);
+    const visible = m.eventGroups.filter((grp) => grp.atMs >= scale.t0 && grp.atMs <= scale.t1);
+    let lastBadgeRight = -Infinity;
+    for (const grp of visible) {
+      const x = scale.x(grp.atMs);
+      const count = grp.events.length;
+      const label =
+        count > 1
+          ? t('events.clusterLabel', { at: fmtMs(grp.atMs), count })
+          : `${fmtMs(grp.atMs)} · ${grp.events[0].participant} [${grp.events[0].level}]: ${grp.events[0].text}`;
+      const g = s(
+        'g',
+        {
+          class: `ev-tick ev-${grp.severity}`,
+          'data-event-at': grp.atMs,
+          'data-testid': 'ecu-event-tick',
+          tabindex: '0',
+          role: 'button',
+          'aria-label': label,
+        },
+        svg,
+      );
+      s('line', { x1: x, x2: x, y1: 3, y2: height - 3 }, g);
+      if (count > 1) {
+        const badge = `×${count}`;
+        const bw = Math.max(20, estimateTextWidth(badge) + 7);
+        const bx = Math.min(Math.max(2, x - bw / 2), Math.max(2, scale.width - bw - 2));
+        if (bx >= lastBadgeRight + 2) {
+          lastBadgeRight = bx + bw;
+          s('rect', { class: 'ev-badge-bg', x: bx, y: 4, width: bw, height: 15, rx: 7 }, g);
+          s(
+            'text',
+            {
+              class: 'ev-badge-txt',
+              x: bx + bw / 2,
+              y: 14.5,
+              'text-anchor': 'middle',
+              text: badge,
+            },
+            g,
+          );
+        } else {
+          s('circle', { class: 'ev-dot', cx: x, cy: height / 2, r: 4 }, g);
+        }
+      } else {
+        s('circle', { class: 'ev-dot', cx: x, cy: height / 2, r: 3.5 }, g);
+      }
+      const tipLines = grp.events.map(
+        (ev) => `${fmtMs(ev.atMs)} · ${ev.participant} [${ev.level}]: ${ev.text}`,
+      );
+      tooltip(g, tipLines.join('\n'));
+      listen(g, 'keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          pinCursorImpl(grp.atMs, { eventIndex: grp.events[0].index });
+        }
+      });
+    }
+    commonFront(svg, m, scale, height);
+    return lane;
+  }
+
+  /** Renders the ECU Events honesty banner + filter chrome + table shell (visible even when hide="tables"). */
+  function renderEcuEventsChrome(m) {
+    const box = $('ecu-events');
+    if (!box) return;
+    if (m.events.length === 0 && m.eventsDropped.length === 0) {
+      box.hidden = true;
+      box.replaceChildren();
+      return;
+    }
+    box.hidden = false;
+    const f = state.eventFilter;
+    const participants = [...new Set(m.events.map((ev) => ev.participant).filter(Boolean))].sort();
+    const levels = ['info', 'warning', 'error'];
+    for (const ev of m.events) {
+      if (ev.level && !levels.includes(ev.level)) levels.push(ev.level);
+    }
+
+    const droppedParts = [];
+    for (const d of m.eventsDropped) {
+      const participant = typeof d.participant === 'string' && d.participant ? d.participant : '?';
+      if (isNum(d.dropped) && d.dropped > 0) {
+        if (isNum(d.dropped_from_ms) && isNum(d.dropped_before_ms)) {
+          droppedParts.push(
+            t('events.droppedTimeline', {
+              participant,
+              count: d.dropped,
+              from: fmtMs(d.dropped_from_ms),
+              to: fmtMs(d.dropped_before_ms),
+            }),
+          );
+        } else {
+          droppedParts.push(t('events.droppedTimelineNoRange', { participant, count: d.dropped }));
+        }
+      }
+      if (isNum(d.agent_dropped) && d.agent_dropped > 0) {
+        droppedParts.push(t('events.droppedAgent', { participant, count: d.agent_dropped }));
+      }
+    }
+    const droppedBanner = droppedParts.length
+      ? h(
+          'div',
+          { class: 'banner warn small', 'data-testid': 'events-dropped-banner' },
+          h('strong', { text: t('events.droppedHeading') }),
+          droppedParts.join('; '),
+          '.',
+        )
+      : null;
+
+    const summaryEl = h('summary', {
+      id: 'ecu-events-summary',
+      text: t('events.count', { shown: m.events.length, total: m.events.length }),
+    });
+
+    const participantSelect = h(
+      'select',
+      {
+        id: 'ecu-events-participant',
+        'data-testid': 'ecu-events-participant',
+        'aria-label': t('events.filterParticipant'),
+        onchange: (e) => {
+          state.eventFilter.participant = e.target.value;
+          state.eventFilter.showAll = false;
+          renderEcuEventsRows();
+        },
+      },
+      h('option', { value: '', text: t('events.allParticipants') }),
+      ...participants.map((p) => h('option', { value: p, text: p })),
+    );
+    participantSelect.value = f.participant;
+
+    const levelSelect = h(
+      'select',
+      {
+        id: 'ecu-events-level',
+        'data-testid': 'ecu-events-level',
+        'aria-label': t('events.filterLevel'),
+        onchange: (e) => {
+          state.eventFilter.level = e.target.value;
+          state.eventFilter.showAll = false;
+          renderEcuEventsRows();
+        },
+      },
+      h('option', { value: '', text: t('events.allLevels') }),
+      ...levels.map((lv) => h('option', { value: lv, text: lv })),
+    );
+    levelSelect.value = f.level;
+
+    const searchInput = h('input', {
+      id: 'ecu-events-search',
+      type: 'search',
+      'data-testid': 'ecu-events-search',
+      'aria-label': t('events.searchLabel'),
+      placeholder: t('events.searchPlaceholder'),
+      oninput: (e) => {
+        state.eventFilter.query = e.target.value;
+        state.eventFilter.showAll = false;
+        renderEcuEventsRows();
+      },
+    });
+    searchInput.value = f.query;
+
+    const visibleToggle = h('input', {
+      id: 'ecu-events-visible-only',
+      type: 'checkbox',
+      'data-testid': 'ecu-events-visible-only',
+      checked: f.visibleOnly,
+      onchange: (e) => {
+        state.eventFilter.visibleOnly = Boolean(e.target.checked);
+        state.eventFilter.showAll = false;
+        renderEcuEventsRows();
+      },
+    });
+
+    const controls =
+      m.events.length > 0
+        ? h(
+            'div',
+            { class: 'ecu-events-controls small', 'data-testid': 'ecu-events-controls' },
+            participantSelect,
+            levelSelect,
+            searchInput,
+            h(
+              'label',
+              { class: 'ecu-events-visible-toggle' },
+              visibleToggle,
+              t('events.visibleOnly'),
+            ),
+          )
+        : null;
+
+    const tableWrap =
+      m.events.length > 0
+        ? h(
+            'div',
+            { class: 'table-wrap ecu-events-wrap' },
+            h(
+              'table',
+              { class: 'ecu-events-table small', 'data-testid': 'ecu-events-table' },
+              h(
+                'thead',
+                {},
+                h(
+                  'tr',
+                  {},
+                  h('th', { scope: 'col', text: t('events.colTime') }),
+                  h('th', { scope: 'col', text: t('events.colDelta') }),
+                  h('th', { scope: 'col', text: t('events.colParticipant') }),
+                  h('th', { scope: 'col', text: t('events.colLevel') }),
+                  h('th', { scope: 'col', text: t('events.colText') }),
+                ),
+              ),
+              h('tbody', { id: 'ecu-events-body' }),
+            ),
+          )
+        : null;
+
+    const panel = h(
+      'details',
+      { class: 'ecu-events-panel', open: true, 'data-testid': 'ecu-events-panel' },
+      summaryEl,
+      droppedBanner,
+      controls,
+      tableWrap,
+      h('p', {
+        id: 'ecu-events-empty',
+        class: 'muted small',
+        hidden: true,
+        text: t('events.noneMatching'),
+      }),
+      h('div', { id: 'ecu-events-more', class: 'ecu-events-more small', hidden: true }),
+    );
+    box.replaceChildren(panel);
+    if (m.events.length > 0) renderEcuEventsRows();
+  }
+
+  /** Computes the Δt string for an event timestamp relative to the active reference/pinned/hover cursor. */
+  function eventDeltaText(atMs) {
+    const base =
+      state.refCursor !== null
+        ? state.refCursor
+        : state.pinned && state.pinnedCursor !== null
+          ? state.pinnedCursor
+          : state.cursor;
+    if (base === null || !isNum(base)) return '—';
+    const diff = Number((atMs - base).toPrecision(6));
+    if (Math.abs(diff) < 1e-9) return '0 ms';
+    return `${diff > 0 ? '+' : ''}${fmtMs(diff)}`;
+  }
+
+  /** Rebuilds only the ECU Events table tbody rows (never touches filter inputs or focus). */
+  function renderEcuEventsRows() {
+    const m = state.model;
+    const tbody = $('ecu-events-body');
+    if (!m || !tbody) return;
+    const f = state.eventFilter;
+    const matched = filterEcuEvents(m.events, {
+      participant: f.participant,
+      level: f.level,
+      query: f.query,
+      visibleOnly: f.visibleOnly,
+      view: state.view,
+    });
+    const summaryEl = $('ecu-events-summary');
+    if (summaryEl) {
+      summaryEl.textContent = t('events.count', { shown: matched.length, total: m.events.length });
+    }
+    const emptyEl = $('ecu-events-empty');
+    if (emptyEl) emptyEl.hidden = matched.length > 0;
+    const limit = f.showAll ? matched.length : Math.min(matched.length, ECU_EVENTS_PAGE_LIMIT);
+    const slice = matched.slice(0, limit);
+    const activeAt = state.pinned && state.pinnedCursor !== null ? state.pinnedCursor : null;
+    const rows = slice.map((ev) => {
+      const lvCls = eventSeverityClass(ev.level);
+      const isSelected = state.selectedEventIndex === ev.index;
+      const isAtCursor = activeAt !== null && Math.abs(ev.atMs - activeAt) < 1e-6;
+      const cls = [
+        'ecu-event-row',
+        isSelected ? 'selected' : '',
+        isAtCursor ? 'active-at-cursor' : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      const pinRow = () => pinCursorImpl(ev.atMs, { eventIndex: ev.index });
+      return h(
+        'tr',
+        {
+          class: cls,
+          'data-testid': 'ecu-event-row',
+          'data-event-index': ev.index,
+          'data-event-at': ev.atMs,
+          'aria-selected': isSelected || isAtCursor ? 'true' : 'false',
+          tabindex: '0',
+          title: t('events.pinRow', { at: fmtMs(ev.atMs) }),
+          onclick: pinRow,
+          onkeydown: (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              pinRow();
+            }
+          },
+        },
+        h('td', { class: 'num', text: fmtMs(ev.atMs) }),
+        h('td', { class: 'num ev-delta', text: eventDeltaText(ev.atMs) }),
+        h('td', {}, h('code', { text: ev.participant })),
+        h('td', {}, h('span', { class: `ev-level ev-${lvCls}`, text: ev.level })),
+        h('td', { text: ev.text }),
+      );
+    });
+    tbody.replaceChildren(...rows);
+
+    const moreEl = $('ecu-events-more');
+    if (moreEl) {
+      if (matched.length > limit) {
+        moreEl.hidden = false;
+        moreEl.replaceChildren(
+          h('span', {
+            class: 'muted',
+            text: t('events.truncated', { shown: limit, total: matched.length }),
+          }),
+          h('button', {
+            type: 'button',
+            class: 'link',
+            'data-testid': 'ecu-events-show-all',
+            text: t('events.showAll', { count: matched.length }),
+            onclick: () => {
+              state.eventFilter.showAll = true;
+              renderEcuEventsRows();
+            },
+          }),
+        );
+      } else {
+        moreEl.hidden = true;
+        moreEl.replaceChildren();
+      }
+    }
+  }
+
+  /** Updates Δt cells and active/selected row highlights in-place when cursor or ref changes. */
+  function syncEcuEventsCursor() {
+    const tbody = $('ecu-events-body');
+    if (!tbody || !state.model || state.model.events.length === 0) return;
+    const activeAt = state.pinned && state.pinnedCursor !== null ? state.pinnedCursor : null;
+    for (const row of tbody.querySelectorAll('[data-event-index]')) {
+      const evIdx = Number(row.getAttribute('data-event-index'));
+      const evAt = Number(row.getAttribute('data-event-at'));
+      const isSelected = state.selectedEventIndex === evIdx;
+      const isAtCursor = activeAt !== null && Math.abs(evAt - activeAt) < 1e-6;
+      row.classList.toggle('selected', isSelected);
+      row.classList.toggle('active-at-cursor', isAtCursor);
+      row.setAttribute('aria-selected', isSelected || isAtCursor ? 'true' : 'false');
+      const deltaCell = row.querySelectorAll('.ev-delta')[0];
+      if (deltaCell) deltaCell.textContent = eventDeltaText(evAt);
+    }
+  }
+
   function variableLane(m, v, scale) {
     const kind = laneKind(v);
     const both = v.written && v.sampled;
@@ -5030,7 +5747,6 @@ tr.selected td {
     commonFront(svg, m, scale, height);
     return lane;
   }
-
   function drawLines(svg, m, v, scale) {
     for (const l of v.lines) {
       if (!isNum(l.from_ms)) continue;
@@ -5529,6 +6245,7 @@ tr.selected td {
     let downPlotLeft = 0;
     let downStep = null;
     let downClusterAt = null;
+    let downEventAt = null;
     let downShift = false;
     let panOrigin = null;
     let sel = null;
@@ -5552,6 +6269,7 @@ tr.selected td {
       down = null;
       downStep = null;
       downClusterAt = null;
+      downEventAt = null;
       downShift = false;
       panOrigin = null;
       activeSvg = null;
@@ -5579,6 +6297,8 @@ tr.selected td {
       if (downShift) chart.setAttribute('data-panning', '');
       const clusterEl = e.target.closest ? e.target.closest('[data-cluster-at]') : null;
       downClusterAt = clusterEl ? number(clusterEl.dataset.clusterAt) : null;
+      const eventEl = e.target.closest ? e.target.closest('[data-event-at]') : null;
+      downEventAt = eventEl ? number(eventEl.dataset.eventAt) : null;
       const stepEl = e.target.closest ? e.target.closest('[data-step]') : null;
       downStep = stepEl ? stepOf(Number(stepEl.dataset.step)) : null;
       if (typeof chart.setPointerCapture === 'function') {
@@ -5649,6 +6369,7 @@ tr.selected td {
       const savedOrigin = panOrigin;
       const savedStep = downStep;
       const savedClusterAt = downClusterAt;
+      const savedEventAt = downEventAt;
       clearDrag();
 
       if (dragged) {
@@ -5672,8 +6393,13 @@ tr.selected td {
         }
         updateCursor();
       } else if (savedClusterAt !== null && savedStep) {
+        state.selectedEventIndex = null;
         focusClusterImpl(savedClusterAt, savedStep.index);
+      } else if (savedEventAt !== null) {
+        const firstEv = state.model.events.find((ev) => ev.atMs === savedEventAt);
+        pinCursorImpl(savedEventAt, { eventIndex: firstEv ? firstEv.index : null });
       } else if (savedStep) {
+        state.selectedEventIndex = null;
         const targetAt =
           savedStep.status === 'failed'
             ? (savedStep.failed?.at_ms ?? savedStep.at_ms ?? savedStep.start_ms)
@@ -5682,9 +6408,12 @@ tr.selected td {
           state.pinned = true;
           state.pinnedCursor = targetAt;
           moveCursor(targetAt, savedStep);
+        } else {
+          syncEcuEventsCursor();
         }
         showStep(savedStep, false, { preserveZoom: true });
       } else {
+        state.selectedEventIndex = null;
         state.pinned = true;
         state.pinnedCursor = t;
         moveCursor(t);
@@ -5855,7 +6584,10 @@ tr.selected td {
       if (time) time.title = time.textContent = t('chart.virtualTime');
       const steps = $('cursor-steps');
       if (steps) steps.title = steps.textContent = '';
+      const evReadout = $('cursor-events');
+      if (evReadout) evReadout.title = evReadout.textContent = '';
       updateStepDetails();
+      syncEcuEventsCursor();
       return;
     }
     const scale = makeScale(state.view[0], state.view[1], state.width);
@@ -5897,8 +6629,16 @@ tr.selected td {
         .map((st) => `#${st.index} ${st.kind} (${statusWord(st.status)})`)
         .join(', ');
     }
+    const evReadout = $('cursor-events');
+    if (evReadout) {
+      const atEvents = m.events.filter((ev) => Math.abs(ev.atMs - at) < 1e-6);
+      evReadout.title = evReadout.textContent = atEvents
+        .map((ev) => `${ev.participant} [${ev.level}]: ${ev.text}`)
+        .join(' · ');
+    }
     const inspected = hoveredStep ?? (hoveredStep === undefined ? stepOf(state.step) : null);
     updateStepDetails(inspected ?? active.find((st) => isObject(st.watch)) ?? active[0]);
+    syncEcuEventsCursor();
   }
 
   // --- loading
@@ -6117,6 +6857,7 @@ tr.selected td {
           hidden: true,
         }),
         h('p', { id: 'chart-hint', 'data-text': 'page.hint' }),
+        h('section', { id: 'ecu-events', hidden: true }),
         h('div', { id: 'tables' }),
       ),
     ];
@@ -6152,6 +6893,7 @@ tr.selected td {
     listen($('unpin-cursor'), 'click', () => {
       state.pinned = false;
       state.pinnedCursor = null;
+      state.selectedEventIndex = null;
       updateCursor();
     });
     listen($('clear-ref'), 'click', () => {
@@ -6189,6 +6931,7 @@ tr.selected td {
           state.pinned = false;
           state.pinnedCursor = null;
           state.refCursor = null;
+          state.selectedEventIndex = null;
           updateCursor();
         }
         return;
@@ -6279,7 +7022,17 @@ tr.selected td {
     theme: ['theme', 'string', 'none'],
   };
   /** The words of hide and the values of theme that timeline.css reads. */
-  const PARTS = ['header', 'summary', 'toolbar', 'help', 'steps', 'readout', 'legend', 'tables'];
+  const PARTS = [
+    'header',
+    'summary',
+    'toolbar',
+    'help',
+    'steps',
+    'events',
+    'readout',
+    'legend',
+    'tables',
+  ];
   const THEMES = ['light', 'dark', 'auto'];
 
   /**
@@ -6570,8 +7323,31 @@ tr.selected td {
         state.pinned = false;
         state.pinnedCursor = null;
         state.refCursor = null;
+        state.selectedEventIndex = null;
         updateCursor();
         return true;
+      });
+    }
+
+    /** Clamps and pins the cursor at `atMs` (scrolling into view if outside the zoom window) and emits `cursorchange`. */
+    pinCursor(atMs) {
+      const at = number(atMs);
+      if (at === null) return false;
+      return this.#runImperative((c) => {
+        let flushedView = false;
+        if (c.changes.has('from') || c.changes.has('to')) {
+          const prev0 = state.view ? state.view[0] : null;
+          const prev1 = state.view ? state.view[1] : null;
+          const from =
+            c.changes.has('from') && c.options.from !== null ? c.options.from : state.view[0];
+          const to = c.changes.has('to') && c.options.to !== null ? c.options.to : state.view[1];
+          c.changes.delete('from');
+          c.changes.delete('to');
+          setView([from, to], true);
+          flushedView = state.view !== null && (state.view[0] !== prev0 || state.view[1] !== prev1);
+        }
+        c.changes.delete('cursor');
+        return pinCursorImpl(at, flushedView ? { flushedView: true } : undefined);
       });
     }
 

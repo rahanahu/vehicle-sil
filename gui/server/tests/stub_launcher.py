@@ -27,7 +27,7 @@ DEFAULT_FEATURES = [
     "scenario-cases", "scenario-templates",
     "connections", "connect", "check-text", "compare-commands", "serve", "check-file-only",
     "serve-prepare", "control-metrics", "external-registry", "record-signals", "record-after-fail",
-    "manual-timeline",
+    "manual-timeline", "record-events",
 ]
 
 def _peer_variables(name: str) -> list[dict]:
@@ -116,6 +116,7 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
     scenario = req.get("scenario")
     scenario_case = req.get("case")
     record_after_fail_ms = req.get("record_after_fail_ms")
+    record_events = bool(req.get("record_events"))
     i = 0
     while i < len(argv):
         if argv[i] == "--disable" and i + 1 < len(argv):
@@ -138,6 +139,8 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
             scenario = argv[i + 1]; i += 2
         elif argv[i] == "--case" and i + 1 < len(argv):
             scenario_case = argv[i + 1]; i += 2
+        elif argv[i] == "--record-events":
+            record_events = True; i += 1
         else:
             i += 1
     if dis:
@@ -156,6 +159,8 @@ def _read_request(argv: list[str]) -> tuple[dict, str | None]:
         req["case"] = scenario_case
     if record_after_fail_ms is not None:
         req["record_after_fail_ms"] = record_after_fail_ms
+    if record_events:
+        req["record_events"] = True
     return req, req_path
 
 
@@ -1336,7 +1341,8 @@ def _execute_run(
 
     def write_manual_timeline(recorded_to_ms: int | None) -> bool:
         record_entries = list(dict.fromkeys(req_dict.get("record") or ()))
-        if has_scenario or not timeline_file or not record_entries:
+        record_events_on = bool(req_dict.get("record_events"))
+        if has_scenario or not timeline_file or (not record_entries and not record_events_on):
             return False
         parts_by_name = {pt["name"]: pt for pt in chk_doc.get("participants", [])}
         tl_vars: list[dict] = []
@@ -1402,6 +1408,28 @@ def _execute_run(
             "findings": [],
             "limits": {"points_per_series": 100000, "points_total": 1000000, "dropped": []},
         }
+        if record_events_on:
+            ev_list: list[dict] = []
+            if recorded_to_ms is not None:
+                end_t = max(0, recorded_to_ms)
+                ev_list.append({
+                    "at_ms": 0, "participant": "Engine", "level": "info",
+                    "text": "J1939 address claimed (0x00)",
+                })
+                if end_t >= 100:
+                    ev_list.append({
+                        "at_ms": 100, "participant": "Dashboard", "level": "info",
+                        "text": "J1939 address claimed (0x17)",
+                    })
+                if end_t >= 300:
+                    ev_list.append({
+                        "at_ms": 300, "participant": "Engine", "level": "warning",
+                        "text": "bus disconnected (ecu.connected=false)",
+                    })
+            tl_doc["events"] = ev_list
+            tl_doc["limits"]["events_per_participant"] = 2000
+            tl_doc["limits"]["events_total"] = 5000
+            tl_doc["limits"]["events_dropped"] = []
         Path(timeline_file).write_text(json.dumps(tl_doc) + "\n", encoding="utf-8")
         return True
 
@@ -1806,6 +1834,30 @@ def _execute_run(
                         "not_applied_from": None, "points": pts,
                     })
                     sampled_names.add(entry)
+            if bool(req_dict.get("record_events")):
+                sc_events = [
+                    {"at_ms": 0, "participant": "Engine", "level": "info", "text": "J1939 address claimed (0x00)"},
+                    {"at_ms": 0, "participant": "Dashboard", "level": "info", "text": "J1939 address claimed (0x17)"},
+                    {
+                        "at_ms": 50, "participant": "Engine", "level": "warning",
+                        "text": "demand ramp active",
+                    },
+                    {
+                        "at_ms": 100, "participant": "Engine", "level": "error" if is_fail_sc else "info",
+                        "text": "speed below target" if is_fail_sc else "speed check nominal",
+                    },
+                ]
+                if is_fail_sc and tail_ms > 0:
+                    sc_events.append({
+                        "at_ms": 100 + max(1, tail_ms // 2),
+                        "participant": "Dashboard",
+                        "level": "warning",
+                        "text": "post-failure recovery check",
+                    })
+                tl_doc["events"] = [ev for ev in sc_events if ev["at_ms"] <= rec_to]
+                tl_doc["limits"]["events_per_participant"] = 2000
+                tl_doc["limits"]["events_total"] = 5000
+                tl_doc["limits"]["events_dropped"] = []
             Path(timeline_file).write_text(json.dumps(tl_doc) + "\n", encoding="utf-8")
         _emit(next_ev("scenario_step", run=run_id, index=1, status="running", at_ms=0, name="step 1"))
         _emit(next_ev("scenario_step", run=run_id, index=1, status="passed", at_ms=0, name="step 1"))

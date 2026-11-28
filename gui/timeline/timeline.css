@@ -78,6 +78,7 @@
 :host([hide~='help']) #help,
 :host([hide~='tables']) #tables,
 :host([hide~='steps']) :is(.lane.steps, #step-details),
+:host([hide~='events']) :is(.lane.ecu-events, #ecu-events),
 :host([hide~='readout']) :is(.readout, .hover-readout),
 :host([hide~='legend']) .legend .key {
   display: none !important;
@@ -1000,4 +1001,145 @@ tr.selected td {
 .var-label {
   font-weight: 600;
   margin-right: 6px;
+}
+/* virtual-time ECU events strip and synchronized correlation drawer */
+.lane.ecu-events {
+  border-top: 1px solid var(--_border);
+  border-bottom: none;
+}
+.lane.ecu-events .lane-head > div {
+  min-width: 0;
+  max-width: 100%;
+}
+.lane.ecu-events .readout {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ev-tick {
+  cursor: pointer;
+}
+.ev-tick line {
+  stroke-width: 2;
+}
+.ev-tick.ev-info {
+  color: var(--_sent);
+}
+.ev-tick.ev-warning {
+  color: var(--_warn);
+}
+.ev-tick.ev-error {
+  color: var(--_bad);
+}
+.ev-tick line {
+  stroke: currentColor;
+}
+.ev-tick .ev-dot {
+  fill: currentColor;
+  stroke: var(--_panel);
+  stroke-width: 1;
+}
+.ev-tick .ev-badge-bg {
+  fill: var(--_panel);
+  stroke: currentColor;
+  stroke-width: 1;
+}
+.ev-tick .ev-badge-txt {
+  fill: currentColor;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.ev-tick:focus-visible {
+  outline: 2px solid var(--_sent);
+  outline-offset: 1px;
+}
+#ecu-events {
+  margin-top: 10px;
+}
+.ecu-events-panel {
+  margin: 0;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: var(--_panel);
+  padding: 6px 10px;
+}
+.ecu-events-panel > summary {
+  padding: 2px 0;
+}
+.ecu-events-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 8px 0 6px;
+}
+.ecu-events-controls select,
+.ecu-events-controls input[type='search'] {
+  font: inherit;
+  color: var(--_fg);
+  background: var(--_bg);
+  border: 1px solid var(--_border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.ecu-events-controls input[type='search'] {
+  min-width: 140px;
+  flex: 1 1 160px;
+  max-width: 260px;
+}
+.ecu-events-visible-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ecu-events-wrap {
+  max-height: 240px;
+  overflow: auto;
+  border-top: 1px solid var(--_grid);
+}
+.ecu-events-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--_panel);
+  z-index: 1;
+}
+tr.ecu-event-row {
+  cursor: pointer;
+}
+tr.ecu-event-row:hover td {
+  background: var(--_bg);
+}
+tr.ecu-event-row.selected td,
+tr.ecu-event-row.active-at-cursor td {
+  background: var(--_selection);
+}
+tr.ecu-event-row:focus-visible {
+  outline: 2px solid var(--_sent);
+  outline-offset: -2px;
+}
+.ev-level {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.ev-level.ev-info {
+  color: var(--_sent);
+}
+.ev-level.ev-warning {
+  color: var(--_warn);
+}
+.ev-level.ev-error {
+  color: var(--_bad);
+}
+.ecu-events-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
 }

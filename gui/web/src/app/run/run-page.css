@@ -183,7 +183,8 @@ mat-card-content {
   gap: var(--app-space-1) var(--app-space-3);
 }
 
-.start-paused {
+.start-paused,
+.record-events {
   display: block;
   margin-block-start: var(--app-space-2);
   max-inline-size: 100%;

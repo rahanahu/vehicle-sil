@@ -65,6 +65,9 @@ struct RunIntent
     /// Virtual milliseconds to keep recording after a normal scenario assertion or wait-timeout
     /// failure (1..kMaxRecordAfterFailMs); omitted = off (stop immediately at failure).
     std::optional<std::int64_t> record_after_fail_ms{};
+    /// Record virtual-timestamped structured ECU control events (control::Agent::log / Ecu::log)
+    /// into the timeline (opt-in; false by default).
+    bool record_events = false;
 };
 
 /// run --control: where the run's control server listens and the files it reads, as the caller
@@ -192,8 +195,8 @@ struct RequestFileRead
 
 /// Reads the text of a request file named `shown`: a JSON object with "vehicle_sil_run_request": 1
 /// and any of variant, params, scenario, case, disable, enable, manual, connect, time_policy, speed,
-/// start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario, record and
-/// record_after_fail_ms. An unknown key, a key written twice, a value of the wrong type (null
+/// start_paused, strict, stop_at_ms, late_tolerance_ms, after_scenario, record,
+/// record_after_fail_ms and record_events. An unknown key, a key written twice, a value of the wrong type (null
 /// too: a key that is not meant is left out) and another version are errors. The format is JSON;
 /// the reader may take more than JSON (it is the YAML reader), which is no promise. Only the form is read: whether the file has the variant, the
 /// participants and the networks is the check's to say. No file system access.
@@ -220,7 +223,7 @@ struct RequestFileRead
 /// - variant, scenario, speed, stop_at_ms, late_tolerance_ms, record_after_fail_ms: the file's if
 ///   the command line gave none. time_policy: the file's unless `time_policy_given` (the command
 ///   line named one, also realtime).
-/// - start_paused, strict: true if either is (no argument says false).
+/// - start_paused, strict, record_events: true if either is (no argument says false).
 /// - params: by name, the argument's value wins.
 /// - connect: merge_connect().
 /// - disable, enable, manual: both lists; a name that the command line gives the other way
