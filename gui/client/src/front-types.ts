@@ -174,6 +174,8 @@ export interface Intent {
   after_scenario?: AfterScenario;
   /** Extra signals (`<participant>.<variable>`) to record on the timeline independent of scenario assertions. */
   record?: string[];
+  /** Virtual milliseconds to keep recording sampled signals after a scenario assertion/timeout failure (1..600000). */
+  record_after_fail_ms?: number;
   variant?: string;
   params?: Record<string, string | number | boolean>;
   speed?: number | 'max';

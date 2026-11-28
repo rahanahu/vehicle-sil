@@ -316,6 +316,7 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
     std::optional<std::string> speed;
     std::optional<std::string> stop_at_ms;
     std::optional<std::string> late_tolerance_ms;
+    std::optional<std::string> record_after_fail_ms;
     std::optional<std::string> time_policy;
     bool strict = false;
     bool start_paused = false;
@@ -519,6 +520,16 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
             record.push_back(std::move(val));
             continue;
         }
+        if (a == "--record-after-fail-ms")
+        {
+            std::string val;
+            if (!take_val(val))
+            {
+                break;
+            }
+            record_after_fail_ms = std::move(val);
+            continue;
+        }
         if (a == "--param")
         {
             std::string val;
@@ -656,6 +667,10 @@ ServeOnceInvocation split_serve_once_arguments(const fs::path& dir, const std::v
     if (late_tolerance_ms)
     {
         intent_fields.push_back("\"late_tolerance_ms\":" + *late_tolerance_ms);
+    }
+    if (record_after_fail_ms)
+    {
+        intent_fields.push_back("\"record_after_fail_ms\":" + *record_after_fail_ms);
     }
 
     std::string cmd = "{\"command\":\"run\"";

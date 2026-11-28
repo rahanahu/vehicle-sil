@@ -2069,3 +2069,577 @@ TEST_CASE(write_only_incomplete_scenario_preserves_recorded_to_ms_and_extra_samp
                                         "  \"lines\": [");
     CHECK(doorSeries.find("\"samples\": 10,\n      \"first_ms\": 0,\n      \"last_ms\": 45,") != std::string::npos);
 }
+
+TEST_CASE(failing_tail_records_post_failure_samples_without_writes_or_dithers)
+{
+    const ScenarioCatalog desc = catalog();
+    const auto make_rec = [&](const char* p, const char* v) {
+        const RecordedVariablesCheck checked = check_recorded_variables(std::vector<std::string>{std::string(p) + "." + v}, desc);
+        CHECK(checked.findings.empty() && checked.variables.size() == 1);
+        return checked.variables.front();
+    };
+    const std::vector<RecordedVariable> extra = {make_rec("Door", "body.speed")};
+
+    // 1. wait_until timeout (scenario-timeout) with subsequent step + extra signal + dither on Body.level:
+    //    Body.level = 30 -> target speed 300 (+50/10ms: reaches 250 at 40ms, 300 at 50ms).
+    //    Wait for Body.body.speed >= 290 with timeout_ms: 30 (fails at 30ms when speed=200).
+    //    With record_after_fail = 100ms, tail runs to 130ms; step 3 (set Body.level = 0) never runs,
+    //    and dither writes stop after p_fail!
+    {
+        const std::string text =
+            "vehicle_sil_scenario: 1\n"
+            "inputs:\n"
+            "  Body.level: { dither: { square: { amplitude: 2, period_ms: 40 } } }\n"
+            "steps:\n"
+            "  - set: { Body.level: 30 }\n"
+            "  - wait_until: { Body.body.speed: { ge: 290 } }\n"
+            "    timeout_ms: 30\n"
+            "  - after_ms: 10\n"
+            "    set: { Body.level: 0 }\n";
+        const Scenario s = read(text, desc);
+
+        const auto run_case = [&](SimDuration tick, std::optional<std::chrono::milliseconds> tail,
+                                  const std::function<void(World&)>& setup = {}) {
+            World w;
+            w.tick = tick;
+            w.record_after_fail = tail;
+            w.ecus[1].level = 20; // Door climbs to 200 during tail
+            if (setup)
+            {
+                setup(w);
+            }
+            TimelineRecord rec(s, {}, extra);
+            w.record = &rec;
+            ScenarioRun run = w.run(s);
+            run.file = "s.yaml";
+            TimelineInput in;
+            in.file = "sim.yaml";
+            in.time_step_ms = ms_of(at(tick));
+            in.scenario = &s;
+            in.run = &run;
+            in.catalog = &desc;
+            in.record = &rec;
+            in.recorded_variables = extra;
+            return std::tuple{std::move(run), format_timeline_json(in), std::move(w.log)};
+        };
+
+        const auto [baseRun, baseTl, baseLog] = run_case(10ms, std::nullopt);
+        CHECK(baseRun.status == ScenarioStatus::Failed);
+        CHECK(baseTl.find("    \"recorded_to_ms\": 30,\n") != std::string::npos);
+
+        const auto [tailRun, tailTl, tailLog] = run_case(10ms, 100ms);
+        CHECK(tailRun.status == ScenarioStatus::Failed);
+        CHECK(tailRun.over_at == std::optional<SimTime>(at(40ms)));
+        CHECK(tailRun.steps[1].status == StepStatus::Failed && tailRun.steps[1].at == std::optional<SimTime>(at(30ms)) &&
+              tailRun.steps[1].code == "scenario-timeout");
+        CHECK(tailRun.steps[2].status == StepStatus::NotRun);
+        CHECK(tailTl.find("    \"over_at_ms\": 40,\n    \"recorded_to_ms\": 130,\n") != std::string::npos);
+
+        // Zero writes or dithers applied after p_fail (40ms):
+        for (const std::string& entry : tailLog)
+        {
+            const std::size_t pos = entry.rfind(" applied at ");
+            CHECK(pos != std::string::npos);
+            const std::int64_t applied_ms = std::stoll(entry.substr(pos + 12));
+            CHECK(applied_ms <= 40);
+            CHECK(entry.find("Body.level=0") == std::string::npos);
+        }
+        // Both watched Body.body.speed and extra-only Door.body.speed recorded up to 130ms!
+        const std::string bodySpeed =
+            part(tailTl, "\"variable\": \"Body.body.speed\",\n      \"source\": \"sampled\"", "\"variable\": \"Door.body.speed\"");
+        CHECK(bodySpeed.find("\"last_ms\": 130,") != std::string::npos);
+        CHECK(bodySpeed.find("[50, 280]") != std::string::npos || bodySpeed.find("[50, 300]") != std::string::npos ||
+              bodySpeed.find("[60, ") != std::string::npos);
+        const std::string doorSpeed =
+            part(tailTl, "\"variable\": \"Door.body.speed\",\n      \"source\": \"sampled\"", "  \"lines\": [");
+        CHECK(doorSpeed.find("\"last_ms\": 130,") != std::string::npos);
+        CHECK(doorSpeed.find("[30, 200]") != std::string::npos);
+
+        // Tick & delivery-policy independence for post-failure tail samples (no dither so writes don't depend on tick):
+        const std::string plainWait =
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - set: { Body.level: 30 }\n"
+            "  - wait_until: { Body.body.speed: { ge: 290 } }\n"
+            "    timeout_ms: 30\n";
+        const Scenario plainS = read(plainWait, desc);
+        const auto run_plain = [&](SimDuration tick, const World::Policy& pol) {
+            World w;
+            w.tick = tick;
+            w.policy = pol;
+            w.record_after_fail = 100ms;
+            w.ecus[1].level = 20;
+            TimelineRecord rec(plainS, {}, extra);
+            w.record = &rec;
+            ScenarioRun run = w.run(plainS);
+            run.file = "s.yaml";
+            TimelineInput in;
+            in.file = "sim.yaml";
+            in.time_step_ms = ms_of(at(tick));
+            in.scenario = &plainS;
+            in.run = &run;
+            in.catalog = &desc;
+            in.record = &rec;
+            in.recorded_variables = extra;
+            return format_timeline_json(in);
+        };
+        const std::string refTail = compared(run_plain(10ms, policies().front().second));
+        for (const SimDuration tick : {SimDuration{5ms}, SimDuration{20ms}, SimDuration{30ms}})
+        {
+            check_text(compared(run_plain(tick, policies().front().second)), refTail, "tail invariant across controller ticks");
+        }
+        for (const auto& [name, pol] : policies())
+        {
+            check_text(compared(run_plain(10ms, pol)), refTail, name.c_str());
+        }
+    }
+
+    // 2. expect, hold_for_ms, and expect-beside-ramp failures all enter FailingTail and stop motions/writes!
+    {
+        const std::string expectText =
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - set: { Body.level: 10 }\n"
+            "  - at_ms: 20\n"
+            "    expect: { Body.level: 99 }\n"
+            "  - at_ms: 50\n"
+            "    set: { Body.level: 0 }\n";
+        const Scenario s = read(expectText, desc);
+        World w;
+        w.tick = 10ms;
+        w.record_after_fail = 80ms;
+        TimelineRecord rec(s, {}, extra);
+        w.record = &rec;
+        const ScenarioRun run = w.run(s);
+        CHECK(run.status == ScenarioStatus::Failed && run.over_at == std::optional<SimTime>(at(30ms)));
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(100ms)));
+        CHECK(run.steps[2].status == StepStatus::NotRun);
+        CHECK(w.log.size() == 1); // only initial set at 0 ms!
+    }
+    {
+        const std::string holdText =
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - set: { Body.level: 10 }\n"
+            "  - at_ms: 0\n"
+            "    expect: { Body.body.speed: { le: 60 } }\n"
+            "    hold_for_ms: 100\n";
+        const Scenario s = read(holdText, desc);
+        World w;
+        w.tick = 10ms;
+        w.record_after_fail = 50ms;
+        TimelineRecord rec(s);
+        w.record = &rec;
+        const ScenarioRun run = w.run(s);
+        // speed is 50 at 0ms, 100 at 10ms -> hold fails at 10ms -> tail to 60ms.
+        CHECK(run.status == ScenarioStatus::Failed && run.steps[1].at == std::optional<SimTime>(at(10ms)));
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(60ms)));
+    }
+    {
+        const std::string rampBesideText =
+            "vehicle_sil_scenario: 1\n"
+            "steps:\n"
+            "  - at_ms: 0\n"
+            "    ramp: { Body.level: { from: 0, to: 100, over_ms: 100 } }\n"
+            "    expect: { Body.level: { le: 20 } }\n";
+        const Scenario s = read(rampBesideText, desc);
+        World w;
+        w.tick = 10ms;
+        w.record_after_fail = 60ms;
+        TimelineRecord rec(s);
+        w.record = &rec;
+        const ScenarioRun run = w.run(s);
+        // Body.level hits 30 at 30ms -> fails at 30ms (p_fail = 40ms) -> tail to 90ms; no ramp writes > 40ms!
+        CHECK(run.status == ScenarioStatus::Failed && run.steps[0].at == std::optional<SimTime>(at(30ms)));
+        CHECK(run.over_at == std::optional<SimTime>(at(40ms)));
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(90ms)));
+        for (const std::string& entry : w.log)
+        {
+            const std::size_t pos = entry.rfind(" applied at ");
+            CHECK(pos != std::string::npos);
+            CHECK(std::stoll(entry.substr(pos + 12)) <= 40);
+        }
+    }
+}
+
+TEST_CASE(failing_tail_is_not_entered_on_write_error_unusable_pass_or_no_timeline)
+{
+    const ScenarioCatalog desc = catalog();
+
+    // 1. scenario-write (setter rejects level 13) -> does NOT enter FailingTail.
+    {
+        const Scenario s = read(kHead + "  - at_ms: 20\n    set: { Body.level: 13 }\n", desc);
+        World w;
+        w.tick = 10ms;
+        w.record_after_fail = 100ms;
+        TimelineRecord rec(s);
+        w.record = &rec;
+        const ScenarioRun run = w.run(s);
+        CHECK(run.status == ScenarioStatus::Failed && run.steps[0].code == "scenario-write");
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(20ms)));
+    }
+
+    // 2. unusable() (disconnected peer on expect condition) -> does NOT enter FailingTail.
+    {
+        const Scenario s = read(kHead + "  - at_ms: 20\n    expect: { Body.level: 0 }\n", desc);
+        World w;
+        w.tick = 10ms;
+        w.record_after_fail = 100ms;
+        w.ecus.erase(w.ecus.begin()); // remove Body so peer is disconnected
+        TimelineRecord rec(s);
+        w.record = &rec;
+        const ScenarioRun run = w.run(s);
+        CHECK(run.status == ScenarioStatus::Failed && run.steps[0].code == "scenario-failed");
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(20ms)));
+    }
+
+    // 3. Passed scenario -> does NOT enter FailingTail.
+    {
+        const Scenario s = read(kHead + "  - set: { Body.level: 10 }\n  - at_ms: 20\n    expect: { Body.level: 10 }\n", desc);
+        World w;
+        w.tick = 10ms;
+        w.record_after_fail = 100ms;
+        TimelineRecord rec(s);
+        w.record = &rec;
+        const ScenarioRun run = w.run(s);
+        CHECK(run.status == ScenarioStatus::Passed);
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(20ms)));
+    }
+
+    // 4. record == nullptr with record_after_fail set -> stops immediately at p_fail (harmless no-op).
+    {
+        const Scenario s = read(kHead + "  - at_ms: 20\n    expect: { Body.level: 99 }\n", desc);
+        World w;
+        w.tick = 10ms;
+        w.record_after_fail = 200ms;
+        w.record = nullptr;
+        const ScenarioRun run = w.run(s);
+        CHECK(run.status == ScenarioStatus::Failed && run.over_at == std::optional<SimTime>(at(30ms)));
+        CHECK(w.ecus[0].last_step && *w.ecus[0].last_step <= at(30ms));
+    }
+}
+
+TEST_CASE(failing_tail_handles_early_termination_and_p_fail_past_tail_end)
+{
+    const ScenarioCatalog desc = catalog();
+    const RecordedVariablesCheck extraCheck = check_recorded_variables(std::vector<std::string>{"Door.body.speed"}, desc);
+    CHECK(extraCheck.findings.empty() && extraCheck.variables.size() == 1);
+    const std::vector<RecordedVariable> extra = extraCheck.variables;
+
+    const std::string failAt20 =
+        "vehicle_sil_scenario: 1\n"
+        "steps:\n"
+        "  - set: { Body.level: 30 }\n"
+        "  - at_ms: 20\n"
+        "    expect: { Body.level: 99 }\n";
+    const Scenario s = read(failAt20, desc);
+
+    // 1. stop_at_ms during FailingTail (fail at 20ms, p_fail = 30ms, tail_end = 320ms, stop_at = 80ms):
+    //    preserves Failed verdict + failed step + over_at (30ms) and closes at 80ms.
+    {
+        World w;
+        w.tick = 10ms;
+        w.stop_at = at(80ms);
+        w.record_after_fail = 300ms;
+        TimelineRecord rec(s, {}, extra);
+        w.record = &rec;
+        const ScenarioRun run = w.run(s);
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.over_at == std::optional<SimTime>(at(30ms)));
+        CHECK(run.steps[1].status == StepStatus::Failed && run.steps[1].at == std::optional<SimTime>(at(20ms)));
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(80ms)));
+    }
+
+    // 2. cut_short() during FailingTail (user Stop / --timeout-ms / child crash during tail):
+    //    preserves Failed verdict + failed step + over_at, drains queued samples <= tail_end,
+    //    and reports in_failing_tail() == true before cut_short() and had_failing_tail() == true after.
+    {
+        struct AppliedPort : ScenarioPort
+        {
+            std::uint64_t next = 1;
+            std::vector<control::OperationResult> results;
+            std::uint64_t write(std::vector<control::PeerWrite> writes, SimTime at) override
+            {
+                control::OperationResult r;
+                r.seq = next++;
+                for (const auto& pw : writes)
+                {
+                    r.targets.push_back(control::TargetResult{pw.peer, control::TargetStatus::Applied, at, false, ""});
+                }
+                results.push_back(r);
+                return r.seq;
+            }
+            std::optional<control::OperationResult> result(std::uint64_t ticket) override
+            {
+                return ticket > 0 && ticket <= results.size() ? std::optional(results[ticket - 1]) : std::nullopt;
+            }
+            std::optional<control::OperationResult> wait_done(std::uint64_t ticket) override { return result(ticket); }
+            void settle() override {}
+        } port;
+        TimelineRecord rec(s, {}, extra);
+        ScenarioEngine engine(s, 10ms, port, {}, &rec, std::nullopt, 300ms);
+        std::vector<EnginePeer> peers(1);
+        peers[0].connected = true;
+        peers[0].schema = model_variables();
+        std::vector<EnginePeer> extraPeers(1);
+        extraPeers[0].connected = true;
+        extraPeers[0].schema = model_variables();
+        engine.begin_extra(extraPeers);
+        engine.begin(peers);
+
+        const auto snap = [](SimTime t, std::int64_t lvl, double spd) {
+            auto sp = std::make_shared<control::Snapshot>();
+            sp->time = t;
+            sp->values = {control::Value{lvl}, control::Value{std::int64_t{0}}, control::Value{std::int64_t{0}},
+                          control::Value{false}, control::Value{0.0}, control::Value{std::int64_t{0}},
+                          control::Value{std::int64_t{0}}, control::Value{false}, control::Value{spd}};
+            return sp;
+        };
+        engine.sample(0, snap(at(0ms), 30, 50.0));
+        engine.extra_sample(0, snap(at(0ms), 0, 10.0));
+        CHECK(!engine.tick(at(0ms)));
+        engine.sample(0, snap(at(10ms), 30, 100.0));
+        CHECK(!engine.tick(at(10ms)));
+        engine.sample(0, snap(at(20ms), 30, 150.0));
+        engine.extra_sample(0, snap(at(20ms), 0, 20.0));
+        CHECK(!engine.tick(at(20ms)));
+        // At tick(30ms), expect at 20ms fails -> enters FailingTail (tail_end = 320ms).
+        CHECK(!engine.tick(at(30ms)));
+        CHECK(engine.in_failing_tail() && engine.had_failing_tail() && !engine.over());
+        CHECK(engine.run().status == ScenarioStatus::Failed && engine.run().over_at == std::optional<SimTime>(at(30ms)));
+
+        // Advance one tail tick (40ms) and queue one more sample at 50ms before cut_short().
+        engine.sample(0, snap(at(30ms), 30, 200.0));
+        engine.extra_sample(0, snap(at(30ms), 0, 30.0));
+        CHECK(!engine.tick(at(40ms)));
+        engine.sample(0, snap(at(50ms), 30, 250.0));
+        engine.extra_sample(0, snap(at(50ms), 0, 40.0));
+        engine.cut_short();
+
+        CHECK(engine.over() && !engine.in_failing_tail() && engine.had_failing_tail());
+        CHECK(engine.run().status == ScenarioStatus::Failed);
+        CHECK(engine.run().over_at == std::optional<SimTime>(at(30ms)));
+        CHECK(engine.run().steps[1].status == StepStatus::Failed && engine.run().steps[1].at == std::optional<SimTime>(at(20ms)));
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(50ms)));
+
+        // Calling superseded() directly after entering/closing FailingTail must be a no-op
+        // that preserves the established Failed verdict and failed step.
+        engine.superseded();
+        CHECK(engine.run().status == ScenarioStatus::Failed);
+        CHECK(engine.run().over_at == std::optional<SimTime>(at(30ms)));
+        CHECK(engine.run().steps[1].status == StepStatus::Failed && engine.run().steps[1].at == std::optional<SimTime>(at(20ms)));
+    }
+
+    // 3. p_fail > tail_end_ edge case: tick = 30ms, expect fails at 10ms -> discovered at p_fail = 30ms;
+    //    record_after_fail = 15ms -> tail_end = 25ms < p_fail = 30ms -> finishes immediately on tick(30ms)
+    //    with recorded_to_ms == 25 and samples 0, 10, 20ms captured for both watched and extra signals!
+    {
+        const Scenario s10 = read("vehicle_sil_scenario: 1\n"
+                                  "steps:\n"
+                                  "  - set: { Body.level: 30 }\n"
+                                  "  - at_ms: 10\n"
+                                  "    expect: { Body.level: 99 }\n",
+                                  desc);
+        World w;
+        w.tick = 30ms;
+        w.record_after_fail = 15ms;
+        w.ecus[1].level = 10;
+        TimelineRecord rec(s10, {}, extra);
+        w.record = &rec;
+        ScenarioRun run = w.run(s10);
+        run.file = "s.yaml";
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.over_at == std::optional<SimTime>(at(30ms)));
+        CHECK(run.steps[1].at == std::optional<SimTime>(at(10ms)));
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(25ms)));
+
+        TimelineInput in;
+        in.file = "sim.yaml";
+        in.time_step_ms = 30.0;
+        in.scenario = &s10;
+        in.run = &run;
+        in.catalog = &desc;
+        in.record = &rec;
+        in.recorded_variables = extra;
+        const std::string tl = format_timeline_json(in);
+        const std::string doorSeries =
+            part(tl, "\"variable\": \"Door.body.speed\",\n      \"source\": \"sampled\"", "  \"lines\": [");
+        CHECK(doorSeries.find("\"samples\": 3,\n      \"first_ms\": 0,\n      \"last_ms\": 20,") != std::string::npos);
+    }
+}
+
+TEST_CASE(failing_tail_defers_future_ecu_step_writes_across_pending_failure)
+{
+    // Reproduces the phys_leak counterexample: controller tick = 5ms, Door ECU step = 10ms.
+    // Step 2 (expect at 100ms) fails at over_at_ms = 105ms. Step 3 (after_ms: 5, at = 105ms)
+    // writes Door.level = 100 whose applied_step is 110ms (> 105ms). Because submit() defers
+    // writes until applied_step <= p + tick_, Step 3 is NOT sent at tick(100) and never executes
+    // during FailingTail!
+    const auto desc = catalog(5ms, 10ms);
+    {
+        const Scenario s = read("vehicle_sil_scenario: 1\n"
+                                "steps:\n"
+                                "  - at_ms: 0\n"
+                                "    set: { Door.level: 0 }\n"
+                                "  - at_ms: 100\n"
+                                "    expect: { Door.level: 99 }\n"
+                                "  - after_ms: 5\n"
+                                "    set: { Door.level: 100 }\n",
+                                desc);
+        World w;
+        w.tick = 5ms;
+        w.ecus[0].step = 5ms;
+        w.ecus[1].step = 10ms;
+        w.record_after_fail = 300ms;
+        TimelineRecord rec(s);
+        w.record = &rec;
+        const ScenarioRun run = w.run(s);
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.over_at == std::optional<SimTime>(at(105ms)));
+        CHECK(run.steps[1].status == StepStatus::Failed && run.steps[1].at == std::optional<SimTime>(at(100ms)));
+        CHECK(run.steps[2].status == StepStatus::NotRun);
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(400ms)));
+        CHECK_EQ(w.ecus[1].level, std::int64_t{0});
+        check_text(joined(w.log), "Door.level=0 for 0 applied at 0\n");
+        CHECK_EQ(rec.series()[0].written.size(), std::size_t{1});
+        CHECK(rec.series()[0].written[0].at == at(0ms));
+    }
+
+    // Mixed-ECU set step at after_ms: 5 targeting both Body (step 5ms -> applied 105ms) and
+    // Door (step 10ms -> applied 110ms): Door's strictly-future write (110ms > over_at 105ms)
+    // must still be deferred and never applied during FailingTail!
+    {
+        const Scenario s = read("vehicle_sil_scenario: 1\n"
+                                "steps:\n"
+                                "  - at_ms: 0\n"
+                                "    set: { Body.level: 0, Door.level: 0 }\n"
+                                "  - at_ms: 100\n"
+                                "    expect: { Door.level: 99 }\n"
+                                "  - after_ms: 5\n"
+                                "    set: { Body.level: 77, Door.level: 100 }\n",
+                                desc);
+        World w;
+        w.tick = 5ms;
+        w.ecus[0].step = 5ms;
+        w.ecus[1].step = 10ms;
+        w.record_after_fail = 200ms;
+        TimelineRecord rec(s);
+        w.record = &rec;
+        const ScenarioRun run = w.run(s);
+        CHECK(run.status == ScenarioStatus::Failed);
+        CHECK(run.over_at == std::optional<SimTime>(at(105ms)));
+        CHECK(rec.recorded_to() == std::optional<SimTime>(at(300ms)));
+        CHECK_EQ(w.ecus[1].level, std::int64_t{0});
+    }
+}
+
+TEST_CASE(timeline_lines_canonical_order_and_tick_invariance_with_mixed_ecu_steps)
+{
+    // Body (10ms) and Door (4ms) have different applied_step rounding for the same/nearby times:
+    // - Cross-step: Step 1 at 35ms (Body due_at=40ms) before Step 2 at 36ms (Door due_at=36ms)
+    // - Within-step set: Step 3 at 45ms writes Body (due_at=50ms) then Door (due_at=48ms)
+    // - Within-step ramp: Step 4 at 55ms moves Body (due_at=60ms) then Door (due_at=56ms)
+    // lines[] must keep canonical (from, dither, step, part) order regardless of controller tick!
+    const auto desc = catalog(10ms, 4ms);
+    const Scenario s = read("vehicle_sil_scenario: 1\n"
+                            "steps:\n"
+                            "  - at_ms: 35\n"
+                            "    set: { Body.level: 10 }\n"
+                            "  - at_ms: 36\n"
+                            "    set: { Door.level: 5 }\n"
+                            "  - at_ms: 45\n"
+                            "    set: { Body.level: 20, Door.level: 15 }\n"
+                            "  - at_ms: 55\n"
+                            "    ramp: { Body.level: { from: 20, to: 30, over_ms: 10 }, Door.level: { from: 15, to: 25, over_ms: 8 } }\n",
+                            desc);
+    const auto run_with_tick = [&](SimDuration tick) {
+        World w;
+        w.tick = tick;
+        w.ecus[0].step = 10ms;
+        w.ecus[1].step = 4ms;
+        TimelineRecord rec(s);
+        w.record = &rec;
+        ScenarioRun run = w.run(s);
+        run.file = "s.yaml";
+        CHECK(run.status == ScenarioStatus::Passed);
+        TimelineInput in;
+        in.file = "sim.yaml";
+        in.time_step_ms = static_cast<double>(tick.count()) / 1'000'000.0;
+        in.scenario = &s;
+        in.run = &run;
+        in.catalog = &desc;
+        in.record = &rec;
+        const std::string json = format_timeline_json(in);
+        return std::pair{part(json, "  \"lines\": [", "  \"findings\": ["),
+                         part(json, "  \"steps\": [", "  \"series\": [")};
+    };
+    const auto [lines4, steps4] = run_with_tick(4ms);
+    const auto [lines10, steps10] = run_with_tick(10ms);
+    check_text(lines4, lines10);
+    // Verify canonical order: 35 Body, 36 Door, 45 Body, 45 Door, 55 Body, 55 Door.
+    const auto pos = [&](const std::string& needle, std::size_t from = 0) {
+        const auto p = lines4.find(needle, from);
+        CHECK(p != std::string::npos);
+        return p;
+    };
+    const std::size_t p0 = pos("\"variable\": \"Body.level\",\n      \"kind\": \"set\",\n      \"line\": 3,\n      \"step\": 1,\n      \"from_ms\": 35,");
+    const std::size_t p1 = pos("\"variable\": \"Door.level\",\n      \"kind\": \"set\",\n      \"line\": 5,\n      \"step\": 2,\n      \"from_ms\": 36,", p0);
+    const std::size_t p2 = pos("\"variable\": \"Body.level\",\n      \"kind\": \"set\",\n      \"line\": 7,\n      \"step\": 3,\n      \"from_ms\": 45,", p1);
+    const std::size_t p3 = pos("\"variable\": \"Door.level\",\n      \"kind\": \"set\",\n      \"line\": 7,\n      \"step\": 3,\n      \"from_ms\": 45,", p2);
+    const std::size_t p4 = pos("\"variable\": \"Body.level\",\n      \"kind\": \"ramp\",\n      \"line\": 9,\n      \"step\": 4,\n      \"from_ms\": 55,", p3);
+    const std::size_t p5 = pos("\"variable\": \"Door.level\",\n      \"kind\": \"ramp\",\n      \"line\": 9,\n      \"step\": 4,\n      \"from_ms\": 55,", p4);
+    CHECK(p0 < p1 && p1 < p2 && p2 < p3 && p3 < p4 && p4 < p5);
+    CHECK(steps4.find("\"lines\": [0]") != std::string::npos);
+    CHECK(steps4.find("\"lines\": [1]") != std::string::npos);
+    CHECK(steps4.find("\"lines\": [2, 3]") != std::string::npos);
+    CHECK(steps4.find("\"lines\": [4, 5]") != std::string::npos);
+}
+
+TEST_CASE(timeline_marks_not_applied_from_when_abandoned_write_has_at_le_over_at_lt_due_at)
+{
+    // Body (4ms) and Door (10ms) with controller tick = 5ms. At tick(5), submit(5, 10) submits
+    // both Body (at=5ms, due_at=8ms) and Door (at=5ms, due_at=10ms). Body refuses immediately in
+    // taken_at_once(), ending the scenario at over_at=5ms and abandoning Door's write (applied
+    // step 10ms > over_at 5ms). Even though Door's point has at == over_at == 5ms, its applied
+    // step (10ms) is strictly after over_at (5ms), so not_applied_from must be 0, not null!
+    const auto desc = catalog(4ms, 10ms);
+    const Scenario s = read("vehicle_sil_scenario: 1\n"
+                            "steps:\n"
+                            "  - at_ms: 5\n"
+                            "    set: { Body.level: 10 }\n"
+                            "  - at_ms: 5\n"
+                            "    set: { Door.level: 20 }\n",
+                            desc);
+    World w;
+    w.tick = 5ms;
+    w.ecus[0].step = 4ms;
+    w.ecus[1].step = 10ms;
+    w.refuse = [](const std::string& peer, SimTime) -> std::optional<control::TargetResult> {
+        if (peer != "Body") return std::nullopt;
+        control::TargetResult r;
+        r.peer = peer;
+        r.status = control::TargetStatus::Invalid;
+        r.reason = "refused at once";
+        return r;
+    };
+    TimelineRecord rec(s);
+    w.record = &rec;
+    ScenarioRun run = w.run(s);
+    run.file = "s.yaml";
+    CHECK(run.status == ScenarioStatus::Failed);
+    CHECK(run.over_at == std::optional<SimTime>(at(5ms)));
+    CHECK_EQ(w.ecus[1].level, std::int64_t{0});
+
+    TimelineInput in;
+    in.file = "sim.yaml";
+    in.time_step_ms = 5.0;
+    in.scenario = &s;
+    in.run = &run;
+    in.catalog = &desc;
+    in.record = &rec;
+    const std::string json = format_timeline_json(in);
+    const std::string doorSeries =
+        part(json, "\"variable\": \"Door.level\",\n      \"source\": \"written\"", "  \"lines\": [");
+    CHECK(doorSeries.find("\"not_applied_from\": 0,") != std::string::npos);
+    CHECK(doorSeries.find("[5, 20]") != std::string::npos);
+}

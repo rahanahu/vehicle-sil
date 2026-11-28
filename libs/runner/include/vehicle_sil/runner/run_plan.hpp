@@ -80,6 +80,8 @@ struct RunChoices
     config::AfterScenario after_scenario = config::AfterScenario::Stop;
     /// Resolved extra variables to record in the timeline (Checked::recorded_variables).
     std::vector<scenario::RecordedVariable> recorded_variables{};
+    /// Virtual-time post-failure tail recording duration (RunIntent::record_after_fail_ms); empty = off.
+    std::optional<std::chrono::milliseconds> record_after_fail{};
 };
 
 /// What the plan knows of one participant of the run beside its entry in the configuration: what
@@ -143,6 +145,8 @@ struct RunPlan
     config::AfterScenario after_scenario = config::AfterScenario::Stop;
     /// Resolved extra variables to record in the timeline (RunChoices::recorded_variables).
     std::vector<scenario::RecordedVariable> recorded_variables{};
+    /// Virtual-time post-failure tail recording duration (RunChoices::record_after_fail); empty = off.
+    std::optional<std::chrono::milliseconds> record_after_fail{};
 
     /// The configuration of `check` (a check that passed has one).
     [[nodiscard]] const config::SimulationConfig& config() const { return *check.config; }

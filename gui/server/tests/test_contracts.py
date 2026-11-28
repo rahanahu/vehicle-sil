@@ -572,6 +572,8 @@ def test_after_scenario_recording_end_ms_and_handover_state_contracts() -> None:
         C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "after_scenario": "pause"})
     with pytest.raises(ValidationError):
         C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "record": ["Engine.engine.mode"]})
+    with pytest.raises(ValidationError):
+        C.CheckTextRequest.model_validate({"file": "a.yaml", "text": "x", "record_after_fail_ms": 300})
 
     rec_req = C.RunRequest.model_validate({"file": "a.yaml", "record": ["Engine.engine.mode", "Dashboard.speed"]})
     assert rec_req.record == ["Engine.engine.mode", "Dashboard.speed"]
@@ -585,6 +587,23 @@ def test_after_scenario_recording_end_ms_and_handover_state_contracts() -> None:
     ):
         with pytest.raises(ValidationError):
             C.RunRequest.model_validate(bad_rec)
+
+    tail_req = C.RunRequest.model_validate({"file": "a.yaml", "scenario": "s.yaml", "record_after_fail_ms": 300})
+    assert tail_req.record_after_fail_ms == 300
+    assert C.CheckFileRequest.model_validate({"file": "a.yaml", "record_after_fail_ms": 600000}).record_after_fail_ms == 600000
+    assert C.SessionIntentSummary.model_validate({"record_after_fail_ms": 1}).record_after_fail_ms == 1
+    for bad_tail in (
+        {"file": "a.yaml", "record_after_fail_ms": None},
+        {"file": "a.yaml", "record_after_fail_ms": 0},
+        {"file": "a.yaml", "record_after_fail_ms": -1},
+        {"file": "a.yaml", "record_after_fail_ms": 600001},
+        {"file": "a.yaml", "record_after_fail_ms": True},
+        {"file": "a.yaml", "record_after_fail_ms": False},
+        {"file": "a.yaml", "record_after_fail_ms": 300.0},
+        {"file": "a.yaml", "record_after_fail_ms": "300"},
+    ):
+        with pytest.raises(ValidationError):
+            C.RunRequest.model_validate(bad_tail)
 
     base_rec = {
         "run_id": "1",

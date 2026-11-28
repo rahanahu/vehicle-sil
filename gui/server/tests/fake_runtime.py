@@ -30,6 +30,7 @@ DEFAULT_FEATURES = (
     "control-server",
     "external-registry",
     "record-signals",
+    "record-after-fail",
 )
 
 

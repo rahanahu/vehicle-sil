@@ -116,6 +116,13 @@
       "items": { "type": "string", "minLength": 1 },
       "description": "Extra ECU variables (\"<participant>.<variable>\") to record in the timeline independent of scenario assertions (--record). Added after the file's entries when combined with --record (deduplicated preserving first-seen order). Empty by default: never records all signals by default.",
       "examples": [["Engine.engine.speed", "Dashboard.dashboard.engine_lost"]]
+    },
+    "record_after_fail_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600000,
+      "description": "Virtual milliseconds to keep recording samples into the timeline after a normal scenario assertion or wait-timeout failure (--record-after-fail-ms). Requires scenario; omitted means stop immediately at failure. No new scenario steps, writes, motions, or dithers are issued after failure detection (over_at_ms); writes already pipelined for (fail_at, over_at_ms] before detection when time_step_ms >= ecu_step_ms may already have been applied by the ECU and remain visible in the timeline.",
+      "examples": [300, 1000]
     }
   }
 }

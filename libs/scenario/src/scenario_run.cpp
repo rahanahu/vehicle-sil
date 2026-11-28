@@ -8,6 +8,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -181,10 +182,15 @@ struct ScenarioEngine::Lines
 ScenarioEngine::~ScenarioEngine() = default;
 
 ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step,
-                               TimelineRecord* record, std::optional<SimTime> stop_at) :
+                               TimelineRecord* record, std::optional<SimTime> stop_at,
+                               std::optional<std::chrono::milliseconds> record_after_fail) :
   scenario_(scenario), tick_(tick), stop_at_(stop_at),
   end_ms_(scenario.end_ms ? std::optional<SimTime>(at_ms(*scenario.end_ms)) : std::nullopt), port_(port),
-  on_step_(std::move(on_step)), lines_(std::make_unique<Lines>()), record_(record)
+  on_step_(std::move(on_step)),
+  record_after_fail_(record_after_fail && *record_after_fail > std::chrono::milliseconds::zero()
+                         ? record_after_fail
+                         : std::nullopt),
+  lines_(std::make_unique<Lines>()), record_(record)
 {
     if (tick_ <= SimDuration::zero())
     {
@@ -196,6 +202,7 @@ ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, Scena
     any_read_ = std::any_of(participants_read_.begin(), participants_read_.end(), [](bool r) { return r; });
     samples_.resize(scenario.participants.size());
     open_writes_.resize(scenario.steps.size(), 0);
+    step_applied_.resize(scenario.steps.size());
     for (const ScenarioVariable& v : scenario.variables)
     {
         lines_->lines.emplace_back(v.type);
@@ -269,6 +276,17 @@ SimDuration ScenarioEngine::step_of(std::size_t variable) const
 {
     const SimDuration step = scenario_.participants[scenario_.variables[variable].participant].step;
     return step > SimDuration::zero() ? step : tick_;
+}
+
+SimTime ScenarioEngine::variable_applied_step(SimTime at, std::size_t variable) const
+{
+    const SimDuration step = scenario_.participants[scenario_.variables[variable].participant].step;
+    if (step <= SimDuration::zero())
+    {
+        return at;
+    }
+    const std::int64_t rem = to_ns(at) % step.count();
+    return at + SimDuration(rem == 0 ? 0 : step.count() - rem);
 }
 
 SimTime ScenarioEngine::next_tick_after(SimTime t) const
@@ -347,7 +365,7 @@ void ScenarioEngine::begin(const std::vector<EnginePeer>& peers)
         return;
     }
     issue();
-    if (!over_)
+    if (phase_ == Phase::Running)
     {
         submit(SimTime{} - SimDuration(1), SimTime{}, true);
     }
@@ -374,7 +392,7 @@ void ScenarioEngine::begin_extra(const std::vector<EnginePeer>& peers)
 
 void ScenarioEngine::sample(std::size_t participant, std::shared_ptr<const control::Snapshot> sample)
 {
-    if (participant < samples_.size() && sample && !over_ && (!stop_at_ || sample->time < *stop_at_))
+    if (participant < samples_.size() && sample && phase_ != Phase::Over && (!stop_at_ || sample->time < *stop_at_))
     {
         samples_[participant].push_back(std::move(sample));
     }
@@ -382,7 +400,7 @@ void ScenarioEngine::sample(std::size_t participant, std::shared_ptr<const contr
 
 void ScenarioEngine::extra_sample(std::size_t extra_participant, std::shared_ptr<const control::Snapshot> sample)
 {
-    if (extra_participant < extra_samples_.size() && sample && !over_ && (!stop_at_ || sample->time < *stop_at_))
+    if (extra_participant < extra_samples_.size() && sample && phase_ != Phase::Over && (!stop_at_ || sample->time < *stop_at_))
     {
         extra_samples_[extra_participant].push_back(std::move(sample));
     }
@@ -395,57 +413,100 @@ bool ScenarioEngine::tick(SimTime p)
         return false;
     }
     now_ = p;
-    if (!over_)
+    if (phase_ == Phase::FailingTail)
     {
-        judge(p);
+        observe_tail(p, *tail_end_);
+        if (p > *tail_end_)
+        {
+            finish_failing_tail(*tail_end_);
+            return true;
+        }
+        return false;
     }
-    if (!over_)
+    if (phase_ == Phase::Over)
+    {
+        if (!run_.over_at)
+        {
+            run_.over_at = p;
+        }
+        close_record();
+        return true;
+    }
+    judge(p);
+    if (phase_ == Phase::Running)
     {
         observe(p);
     }
-    if (!over_)
+    if (phase_ == Phase::Running)
     {
         observe_extra(p);
     }
-    if (!over_ && can_settle_at(p))
+    if (phase_ == Phase::Running && can_settle_at(p))
     {
         settle_at(p);
     }
-    if (!over_ && end_ms_ && p >= *end_ms_ && done_ == run_.steps.size() && sent_.empty() && to_send_.empty() &&
+    if (phase_ == Phase::Running && end_ms_ && p >= *end_ms_ && done_ == run_.steps.size() && sent_.empty() && to_send_.empty() &&
         watches_.empty() && base_.has_value() && next_ == scenario_.steps.size() &&
         std::all_of(motions_.begin(), motions_.end(), [](const Motion& m) { return m.done; }))
     {
         finish(ScenarioStatus::Passed);
     }
-    if (!over_)
+    if (phase_ == Phase::Running)
     {
         submit(p, p + tick_, false);
     }
-    if (over_ && !run_.over_at)
+    if (phase_ == Phase::FailingTail)
+    {
+        // Entered FailingTail during this tick: drain remaining samples < p up to tail_end_.
+        observe_tail(p, *tail_end_);
+        if (p > *tail_end_)
+        {
+            finish_failing_tail(*tail_end_);
+            return true;
+        }
+        return false;
+    }
+    if (phase_ == Phase::Over && !run_.over_at)
     {
         run_.over_at = p;
     }
     close_record();
-    return over_;
+    return phase_ == Phase::Over;
 }
 
 void ScenarioEngine::stopped_at(SimTime p)
 {
-    if (over_ || !begun_)
+    if (phase_ == Phase::Over || !begun_)
     {
         return;
     }
     now_ = p;
+    if (phase_ == Phase::FailingTail)
+    {
+        const SimTime limit = std::min(p, *tail_end_);
+        observe_tail(std::nullopt, limit);
+        const SimTime to = std::min(std::max(*tail_fail_at_, p), *tail_end_);
+        finish_failing_tail(to);
+        return;
+    }
     judge(p);
-    if (!over_)
+    if (phase_ == Phase::Running)
     {
         observe(p, true);
     }
-    if (!over_)
+    if (phase_ == Phase::FailingTail)
+    {
+        const SimTime limit = std::min(p, *tail_end_);
+        observe_tail(std::nullopt, limit);
+        const SimTime to = std::min(std::max(*tail_fail_at_, p), *tail_end_);
+        finish_failing_tail(to);
+        return;
+    }
+    if (phase_ == Phase::Running)
     {
         observe_extra(p);
     }
-    if (!over_)
+    if (phase_ == Phase::Running)
     {
         if (done_ == run_.steps.size() && (!end_ms_ || p >= *end_ms_) && sent_.empty() && to_send_.empty() &&
             watches_.empty() && base_.has_value() && next_ == scenario_.steps.size() &&
@@ -464,16 +525,24 @@ void ScenarioEngine::stopped_at(SimTime p)
 
 void ScenarioEngine::cut_short()
 {
-    if (!over_ && begun_)
+    if (!begun_ || phase_ == Phase::Over)
     {
-        finish(ScenarioStatus::Incomplete);
-        close_record();
+        return;
     }
+    if (phase_ == Phase::FailingTail)
+    {
+        observe_tail(std::nullopt, *tail_end_);
+        const SimTime to = std::min(std::max(*tail_fail_at_, tail_last_seen_.value_or(*tail_fail_at_)), *tail_end_);
+        finish_failing_tail(to);
+        return;
+    }
+    finish(ScenarioStatus::Incomplete);
+    close_record();
 }
 
 void ScenarioEngine::superseded()
 {
-    if (!begun_ || run_.status == ScenarioStatus::Passed)
+    if (!begun_ || run_.status == ScenarioStatus::Passed || tail_entered_)
     {
         return;
     }
@@ -501,7 +570,7 @@ void ScenarioEngine::superseded()
 
 void ScenarioEngine::issue()
 {
-    while (!over_ && base_ && next_ < scenario_.steps.size())
+    while (phase_ == Phase::Running && base_ && next_ < scenario_.steps.size())
     {
         const std::size_t index = next_;
         const ScenarioStep& step = scenario_.steps[index];
@@ -516,7 +585,7 @@ void ScenarioEngine::issue()
             {
                 // Use the normal skipped path: it records nominal start/end and notifies the
                 // observer, without waiting for these steps to occur in the simulation.
-                while (!over_ && next_ < scenario_.steps.size())
+                while (phase_ == Phase::Running && next_ < scenario_.steps.size())
                 {
                     const std::size_t skipped = next_++;
                     const ScenarioStep& item = scenario_.steps[skipped];
@@ -637,25 +706,62 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
     {
     case StepKind::Set:
     {
-        Write write;
-        write.step = index;
-        write.at = time;
-        write.writes = step.writes;
-        to_send_.push_back(std::move(write));
-        open_writes_[index] = 1;
+        // Group writes by the ECU step that applies them so writes for strictly-future ECU steps
+        // are not sent prematurely before a pending failure check at an earlier tick.
+        std::vector<Write> groups;
+        for (std::size_t i = 0; i < step.writes.size(); ++i)
+        {
+            const ScenarioWrite& w = step.writes[i];
+            const SimTime due = variable_applied_step(time, w.variable);
+            auto it = std::find_if(groups.begin(), groups.end(), [due](const Write& g) { return g.due_at == due; });
+            if (it == groups.end())
+            {
+                Write g;
+                g.step = index;
+                g.at = time;
+                g.due_at = due;
+                groups.push_back(std::move(g));
+                it = groups.end() - 1;
+            }
+            it->writes.push_back(w);
+            it->parts.push_back(i);
+        }
+        std::stable_sort(groups.begin(), groups.end(), [](const Write& a, const Write& b) { return a.due_at < b.due_at; });
+        open_writes_[index] = groups.size();
+        for (Write& g : groups)
+        {
+            to_send_.push_back(std::move(g));
+        }
         run_.steps[index].end = time;
         base_ = time;
         break;
     }
     case StepKind::Dither:
     {
-        // One write at its time, whose values are worked out when it is sent (the lines then).
-        Write write;
-        write.step = index;
-        write.at = time;
-        write.dither = true;
-        to_send_.push_back(std::move(write));
-        open_writes_[index] = 1;
+        // Group overlay targets by the ECU step that applies them (same deferral rule as Set).
+        std::vector<Write> groups;
+        for (std::size_t i = 0; i < step.overlays.size(); ++i)
+        {
+            const SimTime due = variable_applied_step(time, step.overlays[i].variable);
+            auto it = std::find_if(groups.begin(), groups.end(), [due](const Write& g) { return g.due_at == due; });
+            if (it == groups.end())
+            {
+                Write g;
+                g.step = index;
+                g.at = time;
+                g.due_at = due;
+                g.dither = true;
+                groups.push_back(std::move(g));
+                it = groups.end() - 1;
+            }
+            it->parts.push_back(i);
+        }
+        std::stable_sort(groups.begin(), groups.end(), [](const Write& a, const Write& b) { return a.due_at < b.due_at; });
+        open_writes_[index] = groups.size();
+        for (Write& g : groups)
+        {
+            to_send_.push_back(std::move(g));
+        }
         run_.steps[index].end = time;
         base_ = time;
         break;
@@ -775,7 +881,8 @@ void ScenarioEngine::pass(std::size_t index, SimTime at, SimTime end)
     }
 }
 
-void ScenarioEngine::fail(std::size_t index, SimTime at, std::string code, std::string message, TimelineFailure failure)
+void ScenarioEngine::fail(std::size_t index, SimTime at, std::string code, std::string message, TimelineFailure failure,
+                          bool allow_tail)
 {
     if (record_ != nullptr)
     {
@@ -795,12 +902,73 @@ void ScenarioEngine::fail(std::size_t index, SimTime at, std::string code, std::
     {
         on_step_(step);
     }
+    if (allow_tail && record_ != nullptr && record_after_fail_.has_value())
+    {
+        begin_failing_tail(at);
+        return;
+    }
     finish(ScenarioStatus::Failed);
+}
+
+void ScenarioEngine::begin_failing_tail(SimTime at)
+{
+    constexpr std::int64_t kMaxNs = std::numeric_limits<std::int64_t>::max();
+    const std::int64_t tail_ns = record_after_fail_->count() * kNanosPerMilli;
+    const std::int64_t at_ns = to_ns(at);
+    const SimTime tail_end =
+        (at_ns > kMaxNs - tail_ns) ? SimTime{SimDuration{kMaxNs}} : (at + *record_after_fail_);
+
+    phase_ = Phase::FailingTail;
+    tail_entered_ = true;
+    run_.status = ScenarioStatus::Failed;
+    if (!run_.over_at)
+    {
+        run_.over_at = now_;
+    }
+    tail_fail_at_ = at;
+    tail_end_ = tail_end;
+    tail_last_seen_ = at;
+
+    for (ScenarioStepRun& step : run_.steps)
+    {
+        if (step.status == StepStatus::Running)
+        {
+            step.status = StepStatus::Unfinished;
+            step.end.reset();
+        }
+        else if (step.status == StepStatus::NotRun)
+        {
+            step.start.reset();
+            step.end.reset();
+        }
+    }
+    // Suppress all further scenario writes, motions, dithers, and condition evaluations.
+    to_send_.clear();
+    motions_.clear();
+    sent_.clear();
+    watches_.clear();
+    base_.reset();
+}
+
+void ScenarioEngine::finish_failing_tail(SimTime to)
+{
+    phase_ = Phase::Over;
+    samples_.clear();
+    samples_.resize(scenario_.participants.size());
+    extra_samples_.clear();
+    extra_samples_.resize(extra_participants_.size());
+    left_.clear();
+    extra_left_.clear();
+    if (record_ != nullptr && !record_closed_)
+    {
+        record_closed_ = true;
+        record_->close(to);
+    }
 }
 
 void ScenarioEngine::finish(ScenarioStatus status)
 {
-    over_ = true;
+    phase_ = Phase::Over;
     run_.status = status;
     for (ScenarioStepRun& step : run_.steps)
     {
@@ -841,7 +1009,7 @@ void ScenarioEngine::finish(ScenarioStatus status)
 
 void ScenarioEngine::close_record()
 {
-    if (record_ == nullptr || record_closed_ || !over_)
+    if (record_ == nullptr || record_closed_ || phase_ != Phase::Over)
     {
         return;
     }
@@ -959,18 +1127,32 @@ bool ScenarioEngine::submit_one(Write write, std::size_t unchecked)
         // The step's inputs that have something to swing around: the line as it stands now, with
         // the dither the step put (none: the line's value alone). An input the scenario has put
         // nothing on yet is not written: its dither waits for the first set, ramp or wave.
-        for (const ScenarioOverlay& overlay : scenario_.steps[write.step].overlays)
-        {
+        const std::vector<ScenarioOverlay>& overlays = scenario_.steps[write.step].overlays;
+        const auto check_overlay = [&](const ScenarioOverlay& overlay) {
             if (at_or_after_stop(overlay.variable))
             {
                 omitted_overlay = true;
-                continue;
+                return;
             }
             usable_overlay = true;
             if (const auto value = lines_->lines[overlay.variable].written_value(write.at))
             {
                 write.writes.push_back(ScenarioWrite{overlay.variable, *value});
                 write.bases.push_back(*lines_->lines[overlay.variable].number(write.at));
+            }
+        };
+        if (write.parts.empty())
+        {
+            for (const ScenarioOverlay& overlay : overlays)
+            {
+                check_overlay(overlay);
+            }
+        }
+        else
+        {
+            for (const std::size_t idx : write.parts)
+            {
+                check_overlay(overlays[idx]);
             }
         }
         if (write.writes.empty())
@@ -1153,12 +1335,12 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
     std::vector<Write> due;
     for (auto it = to_send_.begin(); it != to_send_.end();)
     {
-        if (it->at <= from_exclusive && !at_start)
+        if (it->due_at <= from_exclusive && !at_start)
         {
             missed(it->step, it->at);
             return;
         }
-        if (in_range(it->at))
+        if (in_range(it->due_at))
         {
             due.push_back(std::move(*it));
             it = to_send_.erase(it);
@@ -1177,18 +1359,20 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
             const SimTime regular = motion.from_time + motion.next * motion.period;
             const bool last = regular >= end;
             const SimTime at = last ? end : regular;
-            if (at <= from_exclusive && !at_start)
+            const SimTime due_at = variable_applied_step(at, motion.motion.variable);
+            if (due_at <= from_exclusive && !at_start)
             {
                 missed(motion.step, at);
                 return;
             }
-            if (!in_range(at))
+            if (!in_range(due_at))
             {
                 break;
             }
             Write write;
             write.step = motion.step;
             write.at = at;
+            write.due_at = due_at;
             write.motion = i;
             write.motion_last = last;
             due.push_back(std::move(write));
@@ -1256,9 +1440,20 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
                 }
                 if (due[i].dither)
                 {
-                    for (const ScenarioOverlay& overlay : scenario_.steps[due[i].step].overlays)
+                    const auto& overlays = scenario_.steps[due[i].step].overlays;
+                    if (due[i].parts.empty())
                     {
-                        stepWrites[overlay.variable] = true;
+                        for (const ScenarioOverlay& overlay : overlays)
+                        {
+                            stepWrites[overlay.variable] = true;
+                        }
+                    }
+                    else
+                    {
+                        for (const std::size_t idx : due[i].parts)
+                        {
+                            stepWrites[overlays[idx].variable] = true;
+                        }
                     }
                 }
             }
@@ -1428,10 +1623,9 @@ void ScenarioEngine::place(const Write& write)
     if (write.dither)
     {
         const std::vector<ScenarioOverlay>& overlays = scenario_.steps[write.step].overlays;
-        for (std::size_t i = 0; i < overlays.size(); ++i)
-        {
+        const auto place_overlay = [&](std::size_t i) {
             const ScenarioOverlay& overlay = overlays[i];
-            if (!applies_before_stop(write.at, step_of(overlay.variable), stop_at_)) continue;
+            if (!applies_before_stop(write.at, step_of(overlay.variable), stop_at_)) return;
             lines_->lines[overlay.variable].overlay(overlay.shape);
             lines_->dither[overlay.variable] = overlay.shape ? &overlay : nullptr;
             if (record_ != nullptr)
@@ -1441,6 +1635,20 @@ void ScenarioEngine::place(const Write& write)
                 line.part = i;
                 line.variable = overlay.variable;
                 record_->dither(std::move(line));
+            }
+        };
+        if (write.parts.empty())
+        {
+            for (std::size_t i = 0; i < overlays.size(); ++i)
+            {
+                place_overlay(i);
+            }
+        }
+        else
+        {
+            for (const std::size_t i : write.parts)
+            {
+                place_overlay(i);
             }
         }
         return;
@@ -1454,7 +1662,8 @@ void ScenarioEngine::place(const Write& write)
             lines_->lines[w.variable].set(write.at, w.value);
             if (record_ != nullptr)
             {
-                record_->line(TimelineRecord::Line{write.step, i, w.variable, write.at, w.value,
+                const std::size_t part = i < write.parts.size() ? write.parts[i] : i;
+                record_->line(TimelineRecord::Line{write.step, part, w.variable, write.at, w.value,
                                                    detail::base_source_name(detail::BaseSource::Written)});
             }
         }
@@ -1501,7 +1710,7 @@ SimTime ScenarioEngine::applied_step(const Write& write) const
 
 bool ScenarioEngine::can_settle_at(SimTime p) const
 {
-    if (!end_ms_ || p < *end_ms_ || over_)
+    if (!end_ms_ || p < *end_ms_ || phase_ != Phase::Running)
     {
         return false;
     }
@@ -1518,7 +1727,7 @@ bool ScenarioEngine::can_settle_at(SimTime p) const
 
 void ScenarioEngine::settle_at(SimTime p)
 {
-    while (!over_ && !sent_.empty())
+    while (phase_ == Phase::Running && !sent_.empty())
     {
         Write write = std::move(sent_.front());
         sent_.pop_front();
@@ -1540,7 +1749,7 @@ void ScenarioEngine::settle_at(SimTime p)
 
 void ScenarioEngine::judge(SimTime p)
 {
-    while (!over_ && !sent_.empty())
+    while (phase_ == Phase::Running && !sent_.empty())
     {
         // In the order sent; the judge times of one participant's writes follow that order.
         const auto it = std::find_if(sent_.begin(), sent_.end(), [p](const Write& w) { return w.judge <= p; });
@@ -1561,7 +1770,7 @@ void ScenarioEngine::judge_write(const Write& write, const std::optional<control
         // A dither step that had nothing to write (no input of it had a value yet).
         if (--open_writes_[write.step] == 0)
         {
-            pass(write.step, write.at, *run_.steps[write.step].end);
+            pass(write.step, step_applied_[write.step].value_or(write.at), *run_.steps[write.step].end);
         }
         return;
     }
@@ -1615,10 +1824,16 @@ void ScenarioEngine::judge_write(const Write& write, const std::optional<control
         }
     }
     // (A dither's write of no step decides nothing: it is no step's.)
-    if (!write.grid && --open_writes_[write.step] == 0)
+    if (!write.grid)
     {
-        const ScenarioStepRun& step = run_.steps[write.step];
-        pass(write.step, step.kind == StepKind::Ramp || step.kind == StepKind::Wave ? *step.end : applied, *step.end);
+        step_applied_[write.step] =
+            step_applied_[write.step] ? std::max(*step_applied_[write.step], applied) : applied;
+        if (--open_writes_[write.step] == 0)
+        {
+            const ScenarioStepRun& step = run_.steps[write.step];
+            pass(write.step, step.kind == StepKind::Ramp || step.kind == StepKind::Wave ? *step.end : *step_applied_[write.step],
+                 *step.end);
+        }
     }
 }
 
@@ -1631,26 +1846,29 @@ void ScenarioEngine::evaluate(Watch& watch, SimTime t)
     const bool ok = unmetNow.empty();
     if (!watch.until)
     {
+        const std::size_t index = watch.step;
+        watch.step = run_.steps.size(); // decided (before fail() may clear watches_)
         if (ok)
         {
-            pass(watch.step, t, t);
+            pass(index, t, t);
         }
         else
         {
-            fail(watch.step, t, "scenario-failed", "not true at " + ms_text(t) + " ms: " + unmetNow, unmet_values(step));
+            fail(index, t, "scenario-failed", "not true at " + ms_text(t) + " ms: " + unmetNow, unmet_values(step), true);
         }
-        watch.step = run_.steps.size(); // decided
     }
     else if (watch.hold)
     {
         if (!ok)
         {
-            fail(watch.step, t, "scenario-failed",
-                 (watch.beside ? "not true during the " + std::string(step_kind_name(step.kind)) + " (" + during(watch.step, watch) + ")"
-                               : "not true for " + std::to_string(*step.hold_for_ms) + " ms (from " + ms_text(watch.from) + " ms)") +
-                     ": at " + ms_text(t) + " ms " + unmetNow,
-                 unmet_values(step, watch.beside ? std::optional<SimTime>(watch.from) : std::nullopt));
+            const std::size_t index = watch.step;
+            std::string message =
+                (watch.beside ? "not true during the " + std::string(step_kind_name(step.kind)) + " (" + during(index, watch) + ")"
+                              : "not true for " + std::to_string(*step.hold_for_ms) + " ms (from " + ms_text(watch.from) + " ms)") +
+                ": at " + ms_text(t) + " ms " + unmetNow;
+            TimelineFailure failure = unmet_values(step, watch.beside ? std::optional<SimTime>(watch.from) : std::nullopt);
             watch.step = run_.steps.size();
+            fail(index, t, "scenario-failed", std::move(message), std::move(failure), true);
         }
     }
     else if (ok)
@@ -1754,7 +1972,7 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
                  "not checked during the " + std::string(step_kind_name(step.kind)) + " (" + during(index, watch) + "): no sample of " +
                      unseen + " in that time (its ECU sends one after each of its steps; with samples: as_sent, every sample_period); make the " + step_kind_name(step.kind) +
                      " longer, or check in an expect step with within_ms after it",
-                 std::move(notSeen));
+                 std::move(notSeen), true);
             return;
         }
         // The expect beside it held to the end: the step passes once its writes have, too.
@@ -1773,14 +1991,14 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
         fail(index, t, "scenario-timeout",
              "timed out at " + ms_text(t) + " ms (" + std::to_string(*step.within_ms) + " ms after " + ms_text(watch.from) +
                  " ms): " + unmet(step),
-             unmet_values(step));
+             unmet_values(step), true);
     }
     else
     {
         fail(index, t, "scenario-failed",
              "not true at any time within " + std::to_string(*step.within_ms) + " ms (from " + ms_text(watch.from) + " ms to " +
                  ms_text(t) + " ms): at the end " + unmet(step),
-             unmet_values(step));
+             unmet_values(step), true);
     }
 }
 
@@ -1811,7 +2029,7 @@ void ScenarioEngine::observe(SimTime p, bool final_boundary)
     });
     const auto decided = [this](const Watch& w) { return w.step >= run_.steps.size(); };
     std::size_t next = 0;
-    while (!over_)
+    while (phase_ == Phase::Running)
     {
         watches_.erase(std::remove_if(watches_.begin(), watches_.end(), decided), watches_.end());
         // The next moment a watch begins or ends, if the samples up to it are all there.
@@ -1863,7 +2081,7 @@ void ScenarioEngine::observe(SimTime p, bool final_boundary)
                 }
             }
             // Index loop: a watch that becomes true issues the steps after it (new watches).
-            for (std::size_t i = 0; i < watches_.size() && !over_; ++i)
+            for (std::size_t i = 0; i < watches_.size() && phase_ == Phase::Running; ++i)
             {
                 if (decided(watches_[i]))
                 {
@@ -1878,7 +2096,7 @@ void ScenarioEngine::observe(SimTime p, bool final_boundary)
                 {
                     evaluate(watches_[i], t);
                     // Its last moment: decided here, so that the steps are decided in their order.
-                    if (!over_ && !decided(watches_[i]) && watches_[i].until == t)
+                    if (phase_ == Phase::Running && !decided(watches_[i]) && watches_[i].until == t)
                     {
                         close(watches_[i], t);
                     }
@@ -1889,7 +2107,7 @@ void ScenarioEngine::observe(SimTime p, bool final_boundary)
         else
         {
             const SimTime t = *boundary;
-            for (std::size_t i = 0; i < watches_.size() && !over_; ++i)
+            for (std::size_t i = 0; i < watches_.size() && phase_ == Phase::Running; ++i)
             {
                 if (decided(watches_[i]))
                 {
@@ -1910,7 +2128,17 @@ void ScenarioEngine::observe(SimTime p, bool final_boundary)
             }
         }
     }
-    if (over_ && record_ != nullptr && !record_closed_)
+    if (phase_ == Phase::FailingTail)
+    {
+        // Restore unconsumed batch samples (< p) to the front of each participant's deque
+        // in chronological order so observe_tail() drains them without loss.
+        for (std::size_t idx = batch.size(); idx > next; --idx)
+        {
+            Taken& item = batch[idx - 1];
+            samples_[item.participant].push_front(std::move(item.sample));
+        }
+    }
+    else if (phase_ == Phase::Over && record_ != nullptr && !record_closed_)
     {
         // Taken out of samples_ above and not looked at: for the record, as finish() does.
         for (; next < batch.size(); ++next)
@@ -2011,6 +2239,94 @@ void ScenarioEngine::observe_extra(SimTime p)
                 record_->sampled(ev.timeline_index, taken.time, taken.sample->values[*ev.index]);
             }
         }
+    }
+}
+
+void ScenarioEngine::record_tail_sample(std::size_t participant, bool extra_only, const control::Snapshot& sample,
+                                        SimTime max_inclusive)
+{
+    if (record_ == nullptr || sample.time > max_inclusive)
+    {
+        return;
+    }
+    const SimTime t = sample.time;
+    tail_last_seen_ = tail_last_seen_ ? std::max(*tail_last_seen_, t) : t;
+    last_seen_ = last_seen_ ? std::max(*last_seen_, t) : t;
+    if (!extra_only)
+    {
+        for (std::size_t v = 0; v < variables_.size(); ++v)
+        {
+            if (scenario_.variables[v].participant == participant && variables_[v].index &&
+                *variables_[v].index < sample.values.size())
+            {
+                record_->sampled(v, t, sample.values[*variables_[v].index]);
+            }
+        }
+        for (const ExtraVariable& ev : extra_variables_)
+        {
+            if (ev.scenario_participant == participant && ev.index && *ev.index < sample.values.size())
+            {
+                record_->sampled(ev.timeline_index, t, sample.values[*ev.index]);
+            }
+        }
+    }
+    else
+    {
+        for (const ExtraVariable& ev : extra_variables_)
+        {
+            if (ev.extra_participant == participant && ev.index && *ev.index < sample.values.size())
+            {
+                record_->sampled(ev.timeline_index, t, sample.values[*ev.index]);
+            }
+        }
+    }
+}
+
+void ScenarioEngine::observe_tail(std::optional<SimTime> before_exclusive, SimTime max_inclusive)
+{
+    struct Taken
+    {
+        SimTime time;
+        bool extra_only;
+        std::size_t participant;
+        std::shared_ptr<const control::Snapshot> sample;
+    };
+    const auto eligible = [before_exclusive](SimTime t) { return !before_exclusive || t < *before_exclusive; };
+    std::vector<Taken> batch;
+    for (std::size_t i = 0; i < samples_.size(); ++i)
+    {
+        while (!samples_[i].empty() && eligible(samples_[i].front()->time))
+        {
+            batch.push_back(Taken{samples_[i].front()->time, false, i, std::move(samples_[i].front())});
+            samples_[i].pop_front();
+        }
+    }
+    for (std::size_t i = 0; i < extra_samples_.size(); ++i)
+    {
+        while (!extra_samples_[i].empty() && eligible(extra_samples_[i].front()->time))
+        {
+            batch.push_back(Taken{extra_samples_[i].front()->time, true, i, std::move(extra_samples_[i].front())});
+            extra_samples_[i].pop_front();
+        }
+    }
+    if (record_ == nullptr || batch.empty())
+    {
+        return;
+    }
+    std::stable_sort(batch.begin(), batch.end(), [](const Taken& a, const Taken& b) {
+        if (a.time != b.time)
+        {
+            return a.time < b.time;
+        }
+        if (a.extra_only != b.extra_only)
+        {
+            return !a.extra_only && b.extra_only;
+        }
+        return a.participant < b.participant;
+    });
+    for (const Taken& taken : batch)
+    {
+        record_tail_sample(taken.participant, taken.extra_only, *taken.sample, max_inclusive);
     }
 }
 

@@ -2703,6 +2703,12 @@
           "type": "array",
           "title": "Record"
         },
+        "record_after_fail_ms": {
+          "maximum": 600000,
+          "minimum": 1,
+          "type": "integer",
+          "title": "Record After Fail Ms"
+        },
         "params": {
           "additionalProperties": {
             "anyOf": [

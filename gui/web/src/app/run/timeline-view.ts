@@ -157,6 +157,17 @@ export type SignalPreset = 'all' | 'related' | 'changed' | 'inputs' | 'outputs';
                   >
                     {{ '-300 ms' }}
                   </button>
+                  @if (postFailureTailMs() !== null) {
+                    <button
+                      type="button"
+                      class="nav-btn"
+                      data-testid="timeline-window-around-failure"
+                      (click)="showAroundFailure()"
+                      i18n
+                    >
+                      失敗前後
+                    </button>
+                  }
                   <button
                     type="button"
                     class="nav-btn"
@@ -597,6 +608,12 @@ export class TimelineView {
   protected readonly failure = computed<VehicleSilTimelineLoadFailure | null>(
     () => this.meta()?.failure ?? null,
   );
+  protected readonly postFailureTailMs = computed<number | null>(() => {
+    const m = this.meta();
+    const f = m?.failure;
+    if (!m || !f || f.at === null || m.recordedTo === null || m.recordedTo <= f.at) return null;
+    return m.recordedTo - f.at;
+  });
   protected readonly participants = computed<string[]>(() => [
     ...new Set(this.allVariables().map((v) => v.participant)),
   ]);
@@ -737,6 +754,16 @@ export class TimelineView {
     const el = this.timelineEl()?.nativeElement;
     if (!el || !this.meta()?.failure) return;
     el.jumpToFailure({ leadMs });
+  }
+
+  /** 失敗前と記録済みの失敗後テール全体を同時に収める時間窓に切り替え、カーソルを失敗時刻に固定する。 */
+  protected showAroundFailure(): void {
+    const el = this.timelineEl()?.nativeElement;
+    const tail = this.postFailureTailMs();
+    if (!el || tail === null) return;
+    const leadMs = Math.max(150, Math.min(300, tail));
+    const pad = Math.max(10, Math.round(tail * 0.05));
+    el.jumpToFailure({ leadMs, trailMs: tail + pad });
   }
 
   protected showWholeRun(): void {

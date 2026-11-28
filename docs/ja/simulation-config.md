@@ -882,7 +882,7 @@ variants:
 
 ```text
 vehicle_sil_launch check [--json] [--file-only] [--strict] [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]...]
-                         [--record <participant>.<variable>]...
+                         [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
                          [--describe-timeout-ms <ms>] [--connect <network>=<target>]...
                          [--time-policy realtime|free] [--request <file>] [--speed <speed>]
                          [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -894,7 +894,7 @@ vehicle_sil_launch run [--json] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--variant <name>] [--scenario <file> [--case <name>] [--param <name>=<value>]... [--timeline <file>]]
-                       [--record <participant>.<variable>]...
+                       [--record <participant>.<variable>]... [--record-after-fail-ms <ms>]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--control-metrics <file>]
                        [--external-registry <uri>] [--timeout-ms <ms>]
                        [--stop-at-ms <ms>] [--late-tolerance-ms <ms>]
@@ -940,6 +940,7 @@ vehicle_sil_launch version [--json]
 | `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
 | `--timeline <file>` | `run` だけ、`--scenario` と一緒にだけ | シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。 |
 | `--record <participant>.<variable>` | `check` と `run` | シナリオの判定に影響せず追加の ECU 変数を `--timeline` にサンプリング記録します（繰り返せます。participant の起動前に検証されます）。 |
+| `--record-after-fail-ms <ms>` | `check` と `run`、`--scenario` と一緒にだけ | 通常のシナリオの判定失敗または待ち時間切れの後に、仮想時刻を最大 `<ms>` ms（1 から 600000）受動的に進め、後続の手順・書き込み・揺れを一切行わずに失敗後のサンプルを `--timeline` へ記録します（`--timeline` がない実行では何もしません）。 |
 | `--control-metrics <file>` | `run` だけ | 実行の終わりに、Control Hub の SIL Kit トランスポートの累計カウンター（`HubTransport::stats()`）を JSON のファイルに書きます。`--control` は要りません（[simulation-run.md](simulation-run.md#control-hub-トランスポートのメトリクスを記録する--control-metrics) の「Control Hub トランスポートのメトリクスを記録する（`--control-metrics`）」）。 |
 | `--external-registry <uri>` | `run`、`serve`、`test` | プロセス内の registry を立てる代わりに、起動済みのループバック SIL Kit registry（`silkit://<loopback-host>:<port>`。ポートは 1 から 65535、パスなし）へ接続し、実行ごとに分離された `/vsil-<id>` のシミュレーションパスを使います（[simulation-run.md](simulation-run.md#vector-sil-kit-dashboard-で実行を観測する--external-registry) の「Vector SIL Kit Dashboard で実行を観測する（`--external-registry`）」）。 |
 | `--scenarios <dir or files>` | `test` だけ | 実行するシナリオです。 |

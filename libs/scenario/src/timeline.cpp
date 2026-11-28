@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <tuple>
 #include <utility>
 
 namespace vehicle_sil::scenario {
@@ -300,9 +301,18 @@ void TimelineRecord::close(SimTime to)
     }
     recorded_to_ = to;
     // A line put after `to` is of a write for a time the controller's step let the engine reach
-    // early; with a shorter step it is not there. (They are in the order of their times.) A line
-    // of which no write went out was put, and then the scenario failed at a write before its own.
+    // early; with a shorter step it is not there. A line of which no write went out was put, and
+    // then the scenario failed at a write before its own. Canonicalize order across differing ECU
+    // applied steps so lines[] stays strictly ordered by (from, dither, step, part) and invariant
+    // to controller time_step_ms.
     std::erase_if(lines_, [to](const Line& line) { return line.from > to || !line.sent; });
+    std::stable_sort(lines_.begin(), lines_.end(), [](const Line& a, const Line& b) {
+        const auto key = [](const Line& line) {
+            return std::tuple{line.from, line.dither, line.dither ? std::size_t{0} : line.step,
+                              line.dither ? std::size_t{0} : line.part};
+        };
+        return key(a) < key(b);
+    });
     for (Series& series : series_)
     {
         std::erase_if(series.written, [&](const Written& point) {

@@ -1379,6 +1379,7 @@ When you use another version of `vehicle_sil_launch`, check `features` in the ou
 | `scenario-cases` | Named scenario `cases:`, `--case` / request `"case"`, `case_details`, and `serve` inline `intent.cli_params` | `cases` and request `"case"` are unknown-key errors. |
 | `scenario-templates` | Reusable scenario templates (`- template:`), `call_stack` provenance, and `param_meta` / `missing_params` | `template` is an unknown-key error. |
 | `scenario-variable-compare` | Runtime variable-to-variable comparisons (`{ variable: <participant>.<variable> }`) in `expect` and `wait_until` | `variable` in a condition is an unknown-key or type error. |
+| `record-after-fail` | `--record-after-fail-ms <ms>` / `"record_after_fail_ms"` post-failure passive tail recording into `--timeline` | `--record-after-fail-ms` is a usage error and `"record_after_fail_ms"` is an unknown-key error. |
 
 [simulation-events.md](simulation-events.md) lists every `features` name.
 

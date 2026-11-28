@@ -994,6 +994,10 @@
       "source": "追加で記録する信号:",
       "target": "Recorded signals:"
     },
+    "8030310021372262176": {
+      "source": "失敗後の追加記録 (ms):",
+      "target": "Record after failure (ms):"
+    },
     "4650179018992621111": {
       "source": "なし（自分で操作する）",
       "target": "None (control the run yourself)"
@@ -1049,6 +1053,22 @@
     "6198959273292437434": {
       "source": "止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）",
       "target": "Start paused (hold at virtual time 0 until you resume or step)"
+    },
+    "8544447935620891875": {
+      "source": "失敗後の追加記録 (ms)",
+      "target": "Record after failure (ms)"
+    },
+    "2980842200048262775": {
+      "source": "空欄なら失敗時点で記録を終了します。1〜600000 ms。",
+      "target": "Leave blank to stop recording at failure. Enter 1–600000 ms."
+    },
+    "5656189658803755320": {
+      "source": " 失敗後の追加記録は 1 から 600000 までの整数にしてください。 ",
+      "target": " Enter a whole number from 1 to 600000 for post-failure recording. "
+    },
+    "6406855750920371169": {
+      "source": "失敗後の追加記録は 1 から 600000 までの整数にしてください。",
+      "target": "Enter a whole number from 1 to 600000 for post-failure recording."
     },
     "6441958087714387078": {
       "source": "追加で記録する信号",
@@ -1617,6 +1637,10 @@
     "6681208731780724550": {
       "source": "失敗前:",
       "target": "Pre-failure:"
+    },
+    "2757920659253160938": {
+      "source": " 失敗前後 ",
+      "target": " Around failure "
     },
     "8634432685597510939": {
       "source": " すべて ",

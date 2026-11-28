@@ -11,6 +11,7 @@
 #include "vehicle_sil/scenario/scenario.hpp"
 #include "vehicle_sil/scenario/timeline.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -305,8 +306,11 @@ public:
     using OnStep = std::function<void(const ScenarioStepRun& step)>;
 
     /// `scenario`, `port` and `record` (may be null) must outlive the engine. `tick` > 0.
+    /// `record_after_fail`: optional positive virtual-time window to keep recording samples into
+    /// `record` after a normal assertion or wait-timeout failure (no writes or steps execute).
     ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step = {},
-                   TimelineRecord* record = nullptr, std::optional<SimTime> stop_at = {});
+                   TimelineRecord* record = nullptr, std::optional<SimTime> stop_at = {},
+                   std::optional<std::chrono::milliseconds> record_after_fail = {});
     ~ScenarioEngine();
 
     /// `peers` in the order of Scenario::participants.
@@ -328,11 +332,22 @@ public:
     /// that) is Incomplete instead, its failed step Unfinished. Passed stays.
     void superseded();
 
-    [[nodiscard]] bool over() const noexcept { return over_; }
+    [[nodiscard]] bool over() const noexcept { return phase_ == Phase::Over; }
+    /// True while the engine is recording post-failure tail samples after a normal assertion or
+    /// wait-timeout failure (no writes, dithers, motions, or steps execute).
+    [[nodiscard]] bool in_failing_tail() const noexcept { return phase_ == Phase::FailingTail; }
+    /// True once the engine has entered FailingTail for an established assertion/timeout failure.
+    [[nodiscard]] bool had_failing_tail() const noexcept { return tail_entered_; }
     /// The steps and the status so far (`file` and `name` are the caller's to set).
     [[nodiscard]] const ScenarioRun& run() const noexcept { return run_; }
 
 private:
+    enum class Phase
+    {
+        Running,
+        FailingTail,
+        Over,
+    };
     struct Variable
     {
         std::optional<std::size_t> index; ///< in its participant's samples
@@ -353,7 +368,14 @@ private:
     {
         std::size_t step = 0;
         SimTime at{};
+        /// The earliest ECU step that can apply this write (rounded up to the target ECU's step).
+        /// Used by submit() so writes whose target ECU step is strictly after p + tick_ are not
+        /// sent prematurely across a pending failure check.
+        SimTime due_at{};
         std::vector<ScenarioWrite> writes;
+        /// Original indices in step.writes (for Set) or step.overlays (for Dither) when grouped
+        /// by applied step; empty means 0..size-1.
+        std::vector<std::size_t> parts{};
         /// Per write, once its value is worked out: what it was made of before the dither and
         /// the variable's type (TimelineRecord::Written::base).
         std::vector<double> bases{};
@@ -408,6 +430,9 @@ private:
                    const std::string& did_not, const std::string& hint = {});
     /// The step of the variable's ECU (the controller's, if that is not known).
     [[nodiscard]] SimDuration step_of(std::size_t variable) const;
+    /// The ECU step that applies a write targeting `variable` at virtual time `at` (`at` itself
+    /// when the participant has no declared step).
+    [[nodiscard]] SimTime variable_applied_step(SimTime at, std::size_t variable) const;
     [[nodiscard]] SimTime applied_step(const Write& write) const;
     [[nodiscard]] bool can_settle_at(SimTime p) const;
     void settle_at(SimTime p);
@@ -415,11 +440,16 @@ private:
     void judge_write(const Write& write, const std::optional<control::OperationResult>& result, SimTime p);
     void observe(SimTime p, bool final_boundary = false);
     void observe_extra(SimTime p);
+    void observe_tail(std::optional<SimTime> before_exclusive, SimTime max_inclusive);
+    void record_tail_sample(std::size_t participant, bool extra_only, const control::Snapshot& sample, SimTime max_inclusive);
     void evaluate(Watch& watch, SimTime t);
     void close(Watch& watch, SimTime t);
     void started(std::size_t step);
     void pass(std::size_t step, SimTime at, SimTime end);
-    void fail(std::size_t step, SimTime at, std::string code, std::string message, TimelineFailure failure = {});
+    void fail(std::size_t step, SimTime at, std::string code, std::string message, TimelineFailure failure = {},
+              bool allow_tail = false);
+    void begin_failing_tail(SimTime at);
+    void finish_failing_tail(SimTime to);
     void finish(ScenarioStatus status);
     [[nodiscard]] bool unusable(std::size_t step, SimTime time);
     /// Once the scenario is over: closes the record (see the class comment).
@@ -466,8 +496,13 @@ private:
     ScenarioPort& port_;
     OnStep on_step_;
     ScenarioRun run_;
-    bool over_ = false;
+    Phase phase_ = Phase::Running;
     bool begun_ = false;
+    std::optional<std::chrono::milliseconds> record_after_fail_{};
+    bool tail_entered_ = false;
+    std::optional<SimTime> tail_fail_at_{};
+    std::optional<SimTime> tail_end_{};
+    std::optional<SimTime> tail_last_seen_{};
     SimTime now_{};                  ///< the tick being handled
     std::vector<bool> participants_read_; ///< participants whose samples scenario conditions or motions read
     bool any_read_ = false;          ///< true if any scenario participant is read by conditions or sample-based motions
@@ -488,6 +523,8 @@ private:
     /// Per step: what has yet to happen before it passes: writes not judged yet (motions not done
     /// count their writes to come), and 1 for the watch beside a ramp or a wave until it closes.
     std::vector<std::size_t> open_writes_;
+    /// Per step: latest ECU applied_at observed across its writes (for Set/Dither split by step).
+    std::vector<std::optional<SimTime>> step_applied_;
     std::size_t done_ = 0; ///< steps that passed or were skipped
     TimelineRecord* record_ = nullptr;
     bool record_closed_ = false;

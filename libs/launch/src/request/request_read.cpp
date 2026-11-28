@@ -20,7 +20,7 @@ const std::vector<std::string> kKeys{"vehicle_sil_run_request", "variant",      
                                      "case",                    "disable",      "enable",      "manual",
                                      "connect",                 "time_policy",  "speed",       "start_paused",
                                      "strict",                  "stop_at_ms",   "late_tolerance_ms", "after_scenario",
-                                     "record"};
+                                     "record",                  "record_after_fail_ms"};
 
 class Reader : private config::detail::YamlReader
 {
@@ -190,6 +190,20 @@ public:
             else if (key == "record")
             {
                 intent.record = record_variables(child);
+            }
+            else if (key == "record_after_fail_ms")
+            {
+                std::int64_t value = 0;
+                if (!plain_integer(child, value) || value < 1 || value > kMaxRecordAfterFailMs)
+                {
+                    error("value", doc().line(child),
+                          "record_after_fail_ms must be an integer from 1 to " +
+                              std::to_string(kMaxRecordAfterFailMs) + ", not " + shown_value(child));
+                }
+                else
+                {
+                    intent.record_after_fail_ms = value;
+                }
             }
             if (findings_.size() == before)
             {

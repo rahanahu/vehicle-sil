@@ -3554,3 +3554,174 @@ test('modelMetadata keeps watched strictly from info.watched and exposes recorde
   assert.equal(extra.recorded, true);
   assert.equal(m.byName.get('Dashboard.dashboard.engine_speed').sampled.v[1], 1180);
 });
+
+test('post-failure tail: failureJumpView honors trailMs, variableChangedNear scans post-failure window, header shows tail span, and legacy v1 timelines stay unchanged', async () => {
+  const tl = makeDynamicTimeline({
+    scenario: {
+      file: 'scenarios/tail.yaml',
+      name: 'post-failure tail',
+      status: 'failed',
+      over_at_ms: 210,
+      recorded_to_ms: 500,
+      end_ms: null,
+    },
+    variables: [
+      {
+        name: 'Engine.engine.speed',
+        participant: 'Engine',
+        type: 'integer',
+        causality: 'output',
+        unit: 'rpm',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Dashboard.dashboard.engine_speed',
+        participant: 'Dashboard',
+        type: 'integer',
+        causality: 'output',
+        unit: 'rpm',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: false,
+        recorded: true,
+      },
+      {
+        name: 'Static.flag',
+        participant: 'Static',
+        type: 'bool',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: false,
+        recorded: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 5,
+        kind: 'wait_until',
+        text: 'wait_until Engine.engine.speed ge 1700',
+        status: 'failed',
+        start_ms: 0,
+        at_ms: 200,
+        end_ms: null,
+        code: 'scenario-timeout',
+        message: 'timed out at 200 ms',
+        lines: [],
+        watch: {
+          mode: 'once',
+          from_ms: 0,
+          to_ms: 200,
+          conditions: [
+            {
+              variable: 'Engine.engine.speed',
+              compare: [{ op: 'ge', value: 1700, tolerance: null }],
+            },
+          ],
+        },
+        failed: {
+          at_ms: 200,
+          code: 'scenario-timeout',
+          conditions: [{ condition: 0, value: 1200, sample_ms: 200 }],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      makeSeries(
+        'Engine.engine.speed',
+        'sampled',
+        [
+          [0, 800],
+          [200, 1200],
+          [350, 1600],
+          [500, 1850],
+        ],
+        { last_ms: 500 },
+      ),
+      // Changes ONLY after failure (at 280 ms, within +150 ms of failure at 200 ms)
+      makeSeries(
+        'Dashboard.dashboard.engine_speed',
+        'sampled',
+        [
+          [0, 800],
+          [280, 1450],
+          [500, 1820],
+        ],
+        { last_ms: 500 },
+      ),
+      // Never changes after t=0 -> must remain changedNearFailure: false
+      makeSeries('Static.flag', 'sampled', [[0, false]], { last_ms: 500 }),
+    ],
+  });
+
+  const m = model(tl);
+  assert.equal(m.recordedTo, 500);
+  assert.equal(m.failure.at, 200);
+
+  // 1. failureJumpView with explicit leadMs + trailMs frames [200 - 150, 200 + 300] = [50, 500].
+  assert.deepEqual(T.failureJumpView(m, m.domain, { leadMs: 150, trailMs: 300 }), [50, 500]);
+  // Explicit trailMs = 0 clamps right edge to failure timestamp.
+  assert.deepEqual(T.failureJumpView(m, m.domain, { leadMs: 150, trailMs: 0 }), [50, 200]);
+  // Without trailMs, existing leadMs * 0.25 behavior is preserved.
+  assert.deepEqual(T.failureJumpView(m, m.domain, { leadMs: 150 }), [50, 237.5]);
+
+  // 2. variableChangedNear / modelMetadata catches signals changing right after failure in (200, 350].
+  const meta = T.modelMetadata(m, 'tail.timeline.json');
+  const byName = new Map(meta.variables.map((v) => [v.name, v]));
+  assert.equal(byName.get('Engine.engine.speed').changedNearFailure, true);
+  assert.equal(byName.get('Dashboard.dashboard.engine_speed').changedNearFailure, true);
+  assert.equal(byName.get('Static.flag').changedNearFailure, false);
+
+  // 3. Header fact displays post-failure recorded span in EN and JA.
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const factsEn = el._shadow.getElementById('facts').textContent;
+  assert.ok(factsEn.includes('recorded to 500 ms (+300 ms after failure)'), factsEn);
+
+  el.setAttribute('lang', 'ja');
+  el.attributeChangedCallback('lang', null, 'ja');
+  await new Promise((r) => Promise.resolve().then(r));
+  const factsJa = el._shadow.getElementById('facts').textContent;
+  assert.ok(factsJa.includes('記録の終わり 500 ms（失敗後 +300 ms）'), factsJa);
+
+  // 4. Legacy v1 failed timeline (recorded_to_ms === failed.at_ms, no `recorded` key) shows plain recordedTo without post-failure suffix.
+  const legacy = JSON.parse(JSON.stringify(tl));
+  legacy.scenario.recorded_to_ms = 200;
+  legacy.variables = [legacy.variables[0]];
+  legacy.series = [
+    makeSeries(
+      'Engine.engine.speed',
+      'sampled',
+      [
+        [0, 800],
+        [200, 1200],
+      ],
+      { last_ms: 200 },
+    ),
+  ];
+  const elLegacy = new Element();
+  elLegacy.data = legacy;
+  elLegacy.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const legacyFacts = elLegacy._shadow.getElementById('facts').textContent;
+  assert.ok(legacyFacts.includes('recorded to 200 ms'), legacyFacts);
+  assert.ok(!legacyFacts.includes('after failure'), legacyFacts);
+});

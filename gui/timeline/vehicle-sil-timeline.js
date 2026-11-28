@@ -144,6 +144,7 @@
     'fact.variant': 'variant',
     'fact.timeStep': 'controller time step',
     'fact.recordedTo': 'recorded to',
+    'fact.recordedToAfterFailure': ({ to, tail }) => `${to} (+${tail} after failure)`,
     'fact.nothingRecorded': 'nothing recorded',
     'fact.version': 'vehicle-sil',
     'fact.param': 'param',
@@ -495,6 +496,7 @@
     'fact.variant': 'variant',
     'fact.timeStep': 'コントローラーの時間の刻み',
     'fact.recordedTo': '記録の終わり',
+    'fact.recordedToAfterFailure': ({ to, tail }) => `${to}（失敗後 +${tail}）`,
     'fact.nothingRecorded': '記録なし',
     'fact.version': 'vehicle-sil',
     'fact.param': 'パラメーター',
@@ -2794,7 +2796,7 @@ tr.selected td {
     return [Math.max(model.domain[0], from - pad), Math.min(model.domain[1], to + pad)];
   }
 
-  /** View for jumping to the failure: honors explicit leadMs, or preserves zoom span (~80% pre-failure) when zoomed in. */
+  /** View for jumping to the failure: honors explicit leadMs/trailMs, or preserves zoom span (~80% pre-failure) when zoomed in. */
   function failureJumpView(model, currentView, optionsOrPreserve = true) {
     const f = model.failure;
     if (!f || !isNum(f.at)) return currentView ?? model.domain;
@@ -2802,9 +2804,13 @@ tr.selected td {
     const opts = isObject(optionsOrPreserve)
       ? optionsOrPreserve
       : { preserveZoom: optionsOrPreserve !== false };
-    if (isNum(opts.leadMs) && opts.leadMs > 0) {
-      const t0 = Math.max(d0, f.at - opts.leadMs);
-      const t1 = Math.min(d1, f.at + opts.leadMs * 0.25);
+    const hasLead = isNum(opts.leadMs) && opts.leadMs > 0;
+    const hasTrail = isNum(opts.trailMs) && opts.trailMs >= 0;
+    if (hasLead || hasTrail) {
+      const lead = hasLead ? opts.leadMs : Math.max(150, opts.trailMs * 0.5);
+      const trail = hasTrail ? opts.trailMs : opts.leadMs * 0.25;
+      const t0 = Math.max(d0, f.at - lead);
+      const t1 = Math.min(d1, f.at + trail);
       return [t0, Math.max(t1, t0 + 1e-9)];
     }
     const preserveZoom = opts.preserveZoom !== false;
@@ -3003,15 +3009,16 @@ tr.selected td {
     return { items, rows: packed.rows, count: packed.count };
   }
 
-  /** Whether a variable had any recorded value change in [at - windowMs, at]. */
-  function variableChangedNear(v, at, windowMs) {
+  /** Whether a variable had any recorded value change in [at - windowMs, min(recordedTo, at + windowMs)] (or [at - windowMs, at] without a post-failure tail). */
+  function variableChangedNear(v, at, windowMs, recordedTo = null) {
     if (!isNum(at)) return false;
     const from = at - windowMs;
+    const to = isNum(recordedTo) && recordedTo > at ? Math.min(recordedTo, at + windowMs) : at;
     for (const series of [v.written, v.sampled]) {
       if (!series || !series.t.length) continue;
       for (let i = 0; i < series.t.length; i++) {
         const t = series.t[i];
-        if (t < from || t > at) continue;
+        if (t < from || t > to) continue;
         if (i === 0 ? t > 0 : series.v[i] !== series.v[i - 1]) return true;
       }
     }
@@ -3112,7 +3119,8 @@ tr.selected td {
         recorded: Boolean(v.info.recorded),
         failing: v.failing,
         relatedToFailure: v.failing || related.has(v.name),
-        changedNearFailure: f && isNum(f.at) ? variableChangedNear(v, f.at, nearWindow) : false,
+        changedNearFailure:
+          f && isNum(f.at) ? variableChangedNear(v, f.at, nearWindow, model.recordedTo) : false,
       })),
     };
   }
@@ -3695,7 +3703,17 @@ tr.selected td {
       ['fact.configuration', tl.file],
       ['fact.variant', tl.variant],
       ['fact.timeStep', m.timeStep !== null ? fmtMs(m.timeStep) : null],
-      ['fact.recordedTo', m.recordedTo !== null ? fmtMs(m.recordedTo) : t('fact.nothingRecorded')],
+      [
+        'fact.recordedTo',
+        m.recordedTo !== null
+          ? m.failure && isNum(m.failure.at) && m.recordedTo > m.failure.at
+            ? t('fact.recordedToAfterFailure', {
+                to: fmtMs(m.recordedTo),
+                tail: fmtMs(m.recordedTo - m.failure.at),
+              })
+            : fmtMs(m.recordedTo)
+          : t('fact.nothingRecorded'),
+      ],
       ['fact.version', tl.vehicle_sil],
     ].filter(([, v]) => v !== null && v !== undefined);
     const params = Array.isArray(tl.params) ? tl.params.filter(isObject) : [];

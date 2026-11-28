@@ -336,10 +336,22 @@ void write_series(JsonWriter& w, const TimelineInput& input)
                 w.null("last_ms");
                 // Sent and not known to be applied: the first write of the failed request that
                 // was not applied (or has no result) and what was sent after it, and what was
-                // written for a time after the step at which the scenario was over (no ECU got
-                // to that time).
+                // written for an ECU step after the step at which the scenario was over (no ECU
+                // got to that step).
+                const SimDuration ecu_step =
+                    input.scenario != nullptr && series.variable < input.scenario->variables.size()
+                        ? input.scenario->participants[input.scenario->variables[series.variable].participant].step
+                        : SimDuration::zero();
+                const auto applied_at = [ecu_step](SimTime at) {
+                    if (ecu_step <= SimDuration::zero())
+                    {
+                        return at;
+                    }
+                    const std::int64_t rem = to_ns(at) % ecu_step.count();
+                    return at + SimDuration(rem == 0 ? 0 : ecu_step.count() - rem);
+                };
                 const auto it = std::find_if(series.written.begin(), series.written.end(), [&](const scenario::TimelineRecord::Written& p) {
-                    return p.refused || (input.run->over_at && p.at > *input.run->over_at);
+                    return p.refused || (input.run->over_at && applied_at(p.at) > *input.run->over_at);
                 });
                 if (it != series.written.end())
                 {

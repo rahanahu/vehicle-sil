@@ -671,3 +671,213 @@ test('real extra recorded signal: select unused ECU signal in Run setup, run sce
     await stopRun(page, target, RUN_TIMEOUT);
   }
 });
+
+test('representative failing run: extra non-judgment signal plus post-failure tail recording shows failure marker and post-failure waveforms on both signals', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const target: Target = { base: `http://127.0.0.1:${GUI_PORT}/`, token: guiToken() };
+  const headers = { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin };
+  const app = (await (
+    await page.request.get(new URL('api/app', target.base).href, { headers })
+  ).json()) as {
+    launcher?: { version?: { features?: string[] } };
+  };
+  const features = app.launcher?.version?.features ?? [];
+  test.skip(
+    !features.includes('record-signals') ||
+      !features.includes('record-after-fail') ||
+      !features.includes('timeline'),
+    'launcher does not advertise record-signals / record-after-fail / timeline',
+  );
+
+  const rootDir = process.env['VEHICLE_SIL_GUI_E2E_ROOT'];
+  if (!rootDir) throw new Error('VEHICLE_SIL_GUI_E2E_ROOT is not set');
+  const scenarioPath = join(rootDir, 'scenarios', 'representative_post_fail_e2e.yaml');
+  writeFileSync(
+    scenarioPath,
+    [
+      'vehicle_sil_scenario: 1',
+      'name: representative post-failure tail recording',
+      'steps:',
+      '  - name: apply throttle',
+      '    at_ms: 0',
+      '    set:',
+      '      Engine.engine.throttle: 50',
+      '  - name: wait for engine speed',
+      '    wait_until:',
+      '      Engine.engine.speed: { ge: 1700 }',
+      '    timeout_ms: 200',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  await openRun(page);
+  await stopIfRunning(page);
+  try {
+    await choose(page, 'simulation.yaml');
+    await page.getByTestId('scenario-select').click();
+    await page
+      .getByRole('option', { name: 'representative_post_fail_e2e.yaml', exact: true })
+      .click();
+    await expect(page.getByTestId('check-scenario')).toContainText(
+      'representative_post_fail_e2e.yaml',
+      { timeout: RUN_TIMEOUT },
+    );
+
+    // Configure 300 ms post-failure tail recording
+    const tailInput = page.getByTestId('record-after-fail-ms');
+    await expect(tailInput).toBeVisible();
+    const tailCheck = page.waitForResponse(
+      (r) =>
+        r.url().endsWith('/api/check') &&
+        (r.request().postDataJSON() as Record<string, unknown>)['record_after_fail_ms'] === 300,
+    );
+    await tailInput.fill('300');
+    await tailCheck;
+
+    // Select extra non-judgment signal Dashboard.dashboard.engine_speed
+    const disclosure = page.getByTestId('record-signals');
+    await expect(disclosure).toBeVisible();
+    await disclosure.locator('summary').click();
+    const dashSpeedBox = page
+      .getByTestId('record-signal-option-Dashboard.dashboard.engine_speed')
+      .getByRole('checkbox');
+    if (!(await dashSpeedBox.isChecked())) {
+      const recordCheck = page.waitForResponse(
+        (r) =>
+          r.url().endsWith('/api/check') &&
+          Array.isArray((r.request().postDataJSON() as Record<string, unknown>)['record']) &&
+          ((r.request().postDataJSON() as Record<string, unknown>)['record'] as string[]).includes(
+            'Dashboard.dashboard.engine_speed',
+          ),
+      );
+      await dashSpeedBox.check();
+      await recordCheck;
+    }
+    await expect(page.getByTestId('record-signals-count')).toContainText('1');
+    await expect(page.getByTestId('check-outcome')).toContainText('通った', {
+      timeout: RUN_TIMEOUT,
+    });
+
+    await page.getByTestId('config-card').getByRole('radio', { name: '最速', exact: true }).click();
+    const runReqPromise = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    const runId = await start(page);
+    const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+    expect(runBody['record']).toEqual(['Dashboard.dashboard.engine_speed']);
+    expect(runBody['record_after_fail_ms']).toBe(300);
+
+    await expect(result(page, runId)).toContainText('失敗', { timeout: RUN_TIMEOUT });
+
+    // Verify timeline JSON: failure at 200 ms, recorded_to_ms = 500 ms, post-failure waveform changes on BOTH signals
+    const tlResp = await page.request.get(new URL(`api/timeline/${runId}`, target.base).href, {
+      headers,
+    });
+    expect(tlResp.status()).toBe(200);
+    const tlJson = (await tlResp.json()) as {
+      scenario: { status: string; recorded_to_ms: number; over_at_ms: number };
+      steps: {
+        index: number;
+        status: string;
+        at_ms: number | null;
+        failed: { at_ms: number } | null;
+      }[];
+      variables: { name: string; written: boolean; watched: boolean; recorded?: boolean }[];
+      series: {
+        variable: string;
+        source: string;
+        last_ms: number | null;
+        points: [number, number][];
+      }[];
+    };
+    expect(tlJson.scenario.status).toBe('failed');
+    expect(tlJson.scenario.recorded_to_ms).toBe(500);
+    const failedStep = tlJson.steps.find((s) => s.status === 'failed');
+    expect(failedStep?.failed?.at_ms).toBe(200);
+
+    const extraVar = tlJson.variables.find((v) => v.name === 'Dashboard.dashboard.engine_speed');
+    expect(extraVar).toMatchObject({ written: false, watched: false, recorded: true });
+
+    for (const signalName of ['Engine.engine.speed', 'Dashboard.dashboard.engine_speed']) {
+      const series = tlJson.series.find((s) => s.variable === signalName && s.source === 'sampled');
+      expect(series, `sampled series for ${signalName}`).toBeDefined();
+      expect(series!.last_ms).toBeGreaterThan(200);
+      const beforeOrAt = series!.points.filter((p) => p[0] <= 200);
+      const afterFail = series!.points.filter((p) => p[0] > 200 && p[0] <= 500);
+      expect(afterFail.length, `${signalName} should have post-failure changes`).toBeGreaterThan(0);
+      const valAtFail = beforeOrAt.at(-1)?.[1] ?? 0;
+      const valAtEnd = afterFail.at(-1)![1];
+      expect(valAtEnd, `${signalName} should continue rising after failure`).toBeGreaterThan(
+        valAtFail,
+      );
+    }
+
+    // Standard GUI logic analyzer auto-expands on failure with red failure marker and Around failure framing
+    const scenarioCard = page.getByTestId('scenario-card');
+    await expect(scenarioCard.getByTestId('timeline-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+      { timeout: RUN_TIMEOUT },
+    );
+    await expect(scenarioCard.getByTestId('timeline-failure-strip')).toContainText('200 ms', {
+      timeout: RUN_TIMEOUT,
+    });
+    const timeline = scenarioCard.getByTestId('timeline-element');
+    await expect(timeline).toBeVisible();
+    // SVG vertical .fail-line has 0 bounding-box width; verify it is rendered across all lanes with positive height
+    await expect(timeline.locator('.fail-line')).toHaveCount(4);
+    const failLineMetrics = await timeline
+      .locator('.fail-line')
+      .first()
+      .evaluate((el) => {
+        const style = getComputedStyle(el);
+        return {
+          x1: Number(el.getAttribute('x1')),
+          y1: Number(el.getAttribute('y1')),
+          y2: Number(el.getAttribute('y2')),
+          display: style.display,
+          visibility: style.visibility,
+        };
+      });
+    expect(failLineMetrics.x1).toBeGreaterThan(0);
+    expect(failLineMetrics.y2).toBeGreaterThan(failLineMetrics.y1);
+    expect(failLineMetrics.display).not.toBe('none');
+    expect(failLineMetrics.visibility).not.toBe('hidden');
+    await expect(scenarioCard.getByTestId('timeline-visible-count')).toContainText('3 / 3');
+    await expect(timeline).toContainText('Dashboard.dashboard.engine_speed');
+
+    const aroundBtn = scenarioCard.getByTestId('timeline-window-around-failure');
+    await expect(aroundBtn).toBeVisible();
+    await aroundBtn.click();
+    const aroundView = await timeline.evaluate((el) => {
+      const t = el as HTMLElement & { from: number; to: number; cursor: number | null };
+      return { from: t.from, to: t.to, cursor: t.cursor };
+    });
+    expect(aroundView.from).toBe(0);
+    expect(aroundView.to).toBeGreaterThanOrEqual(500);
+    expect(aroundView.cursor).toBe(200);
+
+    // Non-judgment signal Dashboard.dashboard.engine_speed is searchable, hideable, and restorable
+    await scenarioCard.getByTestId('timeline-signal-search').fill('dashboard.engine_speed');
+    await expect(scenarioCard.getByTestId('timeline-visible-count')).toContainText('1 / 3');
+    await expect(timeline.locator('button.lane-hide')).toHaveCount(1);
+    await timeline.locator('button.lane-hide').first().click();
+    await expect(scenarioCard.getByTestId('timeline-visible-count')).toContainText('0 / 3');
+    const restoreChip = scenarioCard.locator(
+      '[data-testid="timeline-restore-var"][data-variable="Dashboard.dashboard.engine_speed"]',
+    );
+    await expect(restoreChip).toBeVisible();
+    await restoreChip.click();
+    await expect(scenarioCard.getByTestId('timeline-visible-count')).toContainText('1 / 3');
+  } finally {
+    try {
+      unlinkSync(scenarioPath);
+    } catch {
+      // ignore
+    }
+    await stopRun(page, target, RUN_TIMEOUT);
+  }
+});
