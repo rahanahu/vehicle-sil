@@ -388,6 +388,12 @@ export interface SessionView {
   droppedMarks: number;
   /** Progress of the scenario (null for a run without a scenario). */
   scenario: ScenarioView | null;
+  /**
+   * Where the server serves the run's timeline file (`api/timeline/<session id>`), once the run has ended with one
+   * (both scenario runs and manual runs with recorded signals); else null. Falls back to `scenario.timelineUrl` on
+   * older servers.
+   */
+  timelineUrl: string | null;
   /** Root-relative run intent suitable for re-running this session. Undefined on older servers. */
   intent?: SessionIntent | null;
 }
@@ -519,6 +525,7 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     staleEvents: 0,
     droppedMarks: 0,
     scenario: null,
+    timelineUrl: null,
   };
   return applySummary(blank, summary);
 }
@@ -648,6 +655,7 @@ export function applySummary(session: SessionView, summary: SessionSummary): Ses
       overAtMs: result.scenario.over_at_ms ?? (resultHandedOver ? scenario.overAtMs : null),
     };
   }
+  const timelineUrl = summary.timeline_url ?? scenario?.timelineUrl ?? session.timelineUrl ?? null;
   const problems = summary.problems.slice(0, MAX_PROBLEMS);
   const problemsOmitted =
     summary.problems_omitted + Math.max(0, summary.problems.length - problems.length);
@@ -678,6 +686,7 @@ export function applySummary(session: SessionView, summary: SessionSummary): Ses
     result,
     check,
     scenario,
+    timelineUrl,
     // Whether a participant is required or left out is in the check result (as is the order, that of the configuration
     // file). If there is a result, how it ended (stopped or not) comes from the result too
     participants: withResult(

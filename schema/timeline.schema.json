@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "vehicle-sil timeline (vehicle_sil_launch run --scenario --timeline), format 1",
-  "description": "What a scenario did over the virtual time of one run: its steps, the values it wrote and the values it saw. Written by vehicle_sil_launch, read by tools that draw or compare a run. Every time is in milliseconds of virtual time and may have a fraction. A variable is named \"<participant>.<name>\" everywhere. A reader ignores keys it does not know, and does not draw (but names) a series, a watch or a step whose source, encoding, mode, op, kind or status it does not know: this schema therefore lists the values written today in the descriptions and does not close them, and allows more keys everywhere. Every key this schema lists is in every file (all are required, but a step's expect_skipped, which run --json has only when it applies); a key that does not apply has the value null. The manual is docs/simulation-run.md of vehicle-sil.",
+  "title": "vehicle-sil timeline (vehicle_sil_launch run --timeline), format 1",
+  "description": "What a scenario run or manual recorded run did over the virtual time of one run: its steps (empty for manual runs), the values it wrote and the values it saw. Written by vehicle_sil_launch, read by tools that draw or compare a run. Every time is in milliseconds of virtual time and may have a fraction. A variable is named \"<participant>.<name>\" everywhere. A reader ignores keys it does not know, and does not draw (but names) a series, a watch or a step whose source, encoding, mode, op, kind or status it does not know: this schema therefore lists the values written today in the descriptions and does not close them, and allows more keys everywhere. Every key this schema lists is in every file (all are required, except conditional keys such as top-level recorded_to_ms on manual runs, variables[].recorded, and provenance/expect_skipped fields); a key that does not apply has the value null. The manual is docs/simulation-run.md of vehicle-sil.",
   "type": "object",
   "required": [
     "vehicle_sil_timeline",
@@ -79,8 +79,11 @@
       "description": "The time step of the launcher's controller (timing.time_step_ms of run --json): how often the scenario's engine looked at the samples and sent writes."
     },
     "scenario": {
-      "type": "object",
-      "description": "The scenario and its result, as in `run --json`, and up to when the series go.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The scenario and its result, as in `run --json`, and up to when the series go; null for a manual run (--record without --scenario).",
       "required": [
         "file",
         "name",
@@ -134,6 +137,13 @@
           "description": "The scenario's top-level end_ms (virtual time in milliseconds); null when the scenario omits end_ms."
         }
       }
+    },
+    "recorded_to_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Manual runs only (when scenario is null): the right end of the recorded series in virtual time (ms) — stop_at_ms when the run ended at stop_at_ms, the latest sample time otherwise, or null if no samples were recorded. Omitted when scenario is an object (use scenario.recorded_to_ms)."
     },
     "variables": {
       "type": "array",

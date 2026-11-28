@@ -1614,17 +1614,17 @@ The CTest test `launch_run.docs` also compares the examples of this section with
 
 ## Recording a scenario run on a timeline (`--timeline`)
 
-With `--timeline <file>`, `run --scenario` writes the values that the scenario wrote and saw to one JSON file, in virtual-time order. The file is for tools that draw graphs or compare 2 runs. The launcher supports it if `features` of `vehicle_sil_launch version --json` contains `timeline`.
+With `--timeline <file>`, `run` writes the values recorded over virtual time to one JSON file — for a scenario run (`--scenario`), or for a manual run without `--scenario` when at least one variable is requested via `--record` (or `"record"` in a request file / `serve` `intent`). The file is for tools that draw graphs or compare 2 runs. The launcher supports scenario timelines if `features` of `vehicle_sil_launch version --json` contains `timeline`, and manual-run timelines if `features` contains `manual-timeline`.
 
 ```sh
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
 ```
 
-- The file is written after the run, and stderr gets the line `[vehicle_sil_launch] timeline: <file>` (a `log` event under `serve [--once]`). In the result of `run --json` and `serve [--once]`, `scenario.timeline` holds the file name (as given in the arguments), and `null` without `--timeline`. **Without `--timeline`, nothing else in the output of a run changes.**
+- The file is written after the run, and stderr gets the line `[vehicle_sil_launch] timeline: <file>` (a `log` event under `serve [--once]`). In the result of `run --json` and `serve [--once]`, `scenario.timeline` holds the file name for scenario runs (`null` without `--timeline`), and top-level `timeline` holds the file name for manual runs that wrote a timeline (omitted otherwise). **Without `--timeline`, nothing else in the output of a run changes.**
 - The file is opened before anything is started (missing directories are created). If it cannot be opened, the run ends with the error `setup` (exit code 3) and starts nothing. If the file cannot be written after the run (a full disk, for example), the error is `timeline-write`. The scenario result (`scenario.status`) does not change, but the finding is an error, so the run fails even when the scenario passed (exit code 1).
 - If points were dropped at the limits, the `timeline:` line adds the number of dropped points, and the run reports the note `timeline-limit` (see "Limits" below). The exit code does not change.
-- The file is written whether the scenario passes, fails or ends partway. It is not written when a check error kept the run from starting anything.
-- `--timeline` on a `run` without `--scenario` is a usage error. `check` and `test` do not take it.
+- The file is written whether the run passes, fails or ends partway. It is not written when a check error kept the run from starting anything.
+- `--timeline` on a `run` with neither `--scenario` nor `--record` is a usage error (`check` and `test` do not take `--timeline`). Manual runs never default to recording all signals; for each recorded participant whose `--describe` advertises `sample-every-step`, the launcher enables `--sample-every-step` best-effort (with no error or warning if unsupported).
 - The format is in `schema/timeline.schema.json` (JSON Schema). Line ends are LF on every OS.
 
 ### Viewing a timeline file
@@ -1650,7 +1650,8 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 | `vehicle_sil`, `stage` | The vehicle-sil version; `"run"` (the record of an actual run) |
 | `file`, `variant`, `params` | The configuration file (as given in the arguments), the variant (`null` if none), and the scenario parameters with the values in effect (the same form as `scenario.params` of `check --json`) |
 | `time_step_ms` | The controller's time step (the same as `timing.time_step_ms` of `run --json`) |
-| `scenario` | `file`, `name`, optional `case`, `status`, `over_at_ms` and `end_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below) |
+| `scenario` | `file`, `name`, optional `case`, `status`, `over_at_ms` and `end_ms` (as in `run --json`), and `recorded_to_ms` (see "End of the record" below); `null` for a manual run (`--record` without `--scenario`) |
+| `recorded_to_ms` | Manual runs only (emitted when `scenario` is `null`; omitted when `scenario` is an object): the right edge of the recorded series in virtual time (`stop_at_ms` when stopped by `stop_at_ms`, the latest sample time otherwise, or `null` if no samples were recorded) |
 | `variables[]` | The variables that the scenario uses (in order of first use), followed by any extra variables requested with `--record` / `"record"`: `name`, `participant`, `type`, `causality`, `unit`, `min`, `max`, `items` (enum), `ecu_step_ms` (the step size of that ECU), `written` (the scenario writes it), `watched` (a condition reads it), and optional `recorded` (`true` when requested via `--record` / `"record"`, omitted otherwise) |
 | `steps[]` | The steps: the keys of `scenario.steps[]` of `run --json` (including optional `file`, `name`, `call_stack`), plus `lines`, `watch` and `failed` |
 | `series[]` | The value series (see below) |
@@ -1660,7 +1661,7 @@ All times are virtual time in ms, and can be fractional. A variable is always re
 
 A reader ignores keys it does not know. For a value it does not know (`source` and `encoding` of a series, `mode` of `watch`, `op` of a condition, `kind` of a step, `kind` and `base_source` of a line, `type` of `shape`), it leaves that part undrawn and shows the name and `text`. Keys and values can be added without raising the format version. A step's `status` is not one of them: see [Values that carry the result](scenario.md#values-that-carry-the-result).
 
-Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: `recorded` on a variable, `expect_skipped`, `file`, `name` and `call_stack` on a step, `variable` on `watch.conditions[].compare[]`, `compared` on `failed.conditions[]`, `file` on a line, and `case` on `scenario`, which are emitted only when applicable.
+Every key in this section is in every file. A key that does not apply has the value `null`. The exceptions are optional provenance/conditional keys: top-level `recorded_to_ms` (manual runs only), `recorded` on a variable, `expect_skipped`, `file`, `name` and `call_stack` on a step, `variable` on `watch.conditions[].compare[]`, `compared` on `failed.conditions[]`, `file` on a line, and `case` on `scenario`, which are emitted only when applicable.
 
 The `lines` of a step is an array of the positions (from 0) in the top-level `lines[]` of the lines that the step placed. It is empty for a step that writes nothing, a step whose time is after `recorded_to_ms`, and a step that sent no write.
 
@@ -1852,7 +1853,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 
 ### End of the record (`recorded_to_ms`)
 
-`scenario.recorded_to_ms` is the virtual time at the right edge of the record. The series hold only points up to this time, and `lines[]` holds only lines placed up to this time for which a write was sent.
+`scenario.recorded_to_ms` (or top-level `recorded_to_ms` on manual runs where `scenario` is `null`) is the virtual time at the right edge of the record. The series hold only points up to this time, and `lines[]` holds only lines placed up to this time for which a write was sent.
 
 | Scenario | `recorded_to_ms` |
 |---|---|
@@ -1860,6 +1861,7 @@ Each variable that the scenario writes has one line. When a step's time comes, t
 | Passed (`passed`) | The latest `at_ms` of the steps (extended up to `min(end_ms, now)` when `end_ms` is set; with `after_scenario: "pause"`, the timeline closes at handover and does not record post-handover manual steps) |
 | Ended partway (`incomplete`) | The latest time among observed samples and writes sent through the last controller time (0 if there were none). If a write was refused and then a participant failure became the result of the run, the time of that write (`failed` is `null` for every step, but `not_applied_from` is not `null`) |
 | Did not start (`not_run`; if the simulation started but the scenario could not, `incomplete`) | `null` (the series are empty) |
+| Manual run (`scenario` is `null`) | Top-level `recorded_to_ms`: `stop_at_ms` when the run reached `stop_at_ms`; otherwise the latest sample time seen (`null` if zero samples were recorded or the simulation did not start) |
 
 - The controller sees samples only once per time step, so the time at which it knows that the scenario is over (`over_at_ms`) is usually after `recorded_to_ms`. The samples and writes in between are left out of the file. Two exceptions can place `over_at_ms` at or before `recorded_to_ms`: a run that failed on a write that the ECU's Agent refused at once (`over_at_ms` is the time step of the refusal while `recorded_to_ms` is the time of that write), and a run with `--record-after-fail-ms` (where `over_at_ms` stays at the failure detection tick while `recorded_to_ms` extends through the passive post-failure tail). Post-failure tail recording applies only to normal assertion or wait-timeout failures (`scenario-failed` / `scenario-timeout`) when `--timeline` is active; write errors (`scenario-write`), unusable-variable failures, passes, and early stops before failure do not enter the tail. No new scenario steps, writes, motions, or dithers are issued after failure detection (`over_at_ms`), while writes already pipelined for `(at_ms, over_at_ms]` before detection (when `time_step_ms >= ecu_step_ms`) may already have been applied by the ECU and remain visible in the timeline.
 - **The same run gives the same file.** The file holds only what virtual time decides (no real time, process IDs or lateness counts), so a different speed (`--speed`) gives the same file. This holds for runs that passed and for runs that failed on a sample or a wait. If an ECU itself depends on real time or random numbers, its value series change too.

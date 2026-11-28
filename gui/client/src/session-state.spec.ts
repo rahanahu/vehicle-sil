@@ -1738,6 +1738,35 @@ describe('addProblem', () => {
       variant: 'sil',
       params: { target_rpm: 1200 },
     });
+    expect(initial.timelineUrl).toBeNull();
+
+    // Top-level timeline_url on a manual run (scenario === null) and fallback on legacy scenario summary
+    const manualWithTimeline = sessionFromSummary(
+      summary({
+        id: 'manual-1',
+        scenario: null,
+        timeline_url: 'api/timeline/manual-1',
+      }),
+    );
+    expect(manualWithTimeline.scenario).toBeNull();
+    expect(manualWithTimeline.timelineUrl).toBe('api/timeline/manual-1');
+
+    const legacyScenario = sessionFromSummary(
+      summary({
+        id: 'legacy-1',
+        scenario: {
+          file: 'scenarios/a.yaml',
+          name: 'a',
+          step_count: 1,
+          steps: [],
+          steps_omitted: 0,
+          status: 'passed',
+          over_at_ms: 100,
+          timeline_url: 'api/timeline/legacy-1',
+        },
+      }),
+    );
+    expect(legacyScenario.timelineUrl).toBe('api/timeline/legacy-1');
 
     const checked = applyEvents(
       initial,

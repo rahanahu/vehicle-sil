@@ -2096,6 +2096,136 @@ describe('RunPage', () => {
     ).toBe('');
     localStorage.removeItem('vehicle-sil-gui-language');
   });
+
+  it('shows Recorded signals on manual runs when manual-timeline is advertised, keeps record-after-fail scenario-only, and renders the manual timeline card', async () => {
+    const appWithManualTimeline = () => {
+      const base = response('app') as { launcher: { version: { features: string[] } } };
+      return {
+        ...base,
+        launcher: {
+          ...base.launcher,
+          version: {
+            ...base.launcher.version,
+            features: [
+              ...new Set([
+                ...base.launcher.version.features,
+                'record-signals',
+                'record-after-fail',
+                'manual-timeline',
+              ]),
+            ],
+          },
+        },
+      };
+    };
+    const checkWithVars = () => {
+      const base = response('check-passed') as {
+        check: { participants: Record<string, unknown>[] };
+      };
+      return {
+        ...base,
+        check: {
+          ...base.check,
+          participants: [
+            {
+              name: 'Engine',
+              enabled: true,
+              manual: false,
+              required: true,
+              status: 'described',
+              step_ms: 10,
+              variables: [
+                {
+                  name: 'engine.speed',
+                  type: 'integer',
+                  causality: 'output',
+                  unit: 'rpm',
+                  min: 0,
+                  max: 6000,
+                  builtin: false,
+                },
+              ],
+            },
+          ],
+        },
+      };
+    };
+
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(appWithManualTimeline());
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    fake.last().send(server('ws-pass')[0]);
+    fake.last().send(server('ws-pass')[1]);
+    await advance(BATCH_MS);
+    TestBed.tick();
+    (await checkRequest()).flush(checkWithVars());
+    await settle();
+
+    const host = fixture.nativeElement as HTMLElement;
+    // Manual run (no scenario): Recorded signals is visible, while Record after failure stays hidden
+    const details = host.querySelector<HTMLDetailsElement>('[data-testid="record-signals"]');
+    expect(details).not.toBeNull();
+    expect(host.querySelector('[data-testid="record-after-fail-ms"]')).toBeNull();
+
+    details!.open = true;
+    TestBed.tick();
+    const opt = host.querySelector<HTMLInputElement>(
+      '[data-testid="record-signal-option-Engine.engine.speed"] input[type="checkbox"]',
+    )!;
+    opt.click();
+    TestBed.tick();
+    expect(pageIntent.get().record).toEqual(['Engine.engine.speed']);
+
+    const manualRecCheck = await checkRequest();
+    expect((manualRecCheck.request.body as Record<string, unknown>)['scenario']).toBeUndefined();
+    expect(manualRecCheck.request.body).toMatchObject({ record: ['Engine.engine.speed'] });
+    manualRecCheck.flush(checkWithVars());
+    await advance(1);
+    await settle();
+
+    button(fixture, 'start').click();
+    const runReq = http.expectOne('api/run');
+    expect((runReq.request.body as Record<string, unknown>)['scenario']).toBeUndefined();
+    expect(runReq.request.body).toMatchObject({ record: ['Engine.engine.speed'] });
+    runReq.flush(response('run'));
+
+    // Ended manual session with top-level timeline_url mounts the full-width manual timeline card (no scenario card)
+    const baseSession = (server('ws-pass')[3] as { session: Record<string, unknown> }).session;
+    fake.last().send({
+      type: 'session',
+      stream_seq: 50,
+      session: {
+        ...baseSession,
+        id: 'manual-99',
+        file: 'bad-lines.yaml',
+        state: 'ended',
+        scenario: null,
+        timeline_url: 'api/timeline/manual-99',
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+        allowed: { start: { ok: true, reason: null, message: null } },
+        intent: {
+          disable: [],
+          manual: [],
+          record: ['Engine.engine.speed'],
+        },
+      },
+    });
+    fake.last().send({ type: 'synced', stream_seq: 51, run_id: 'manual-99', last_seq: 1 });
+    await advance(BATCH_MS);
+    TestBed.tick();
+    await settle();
+
+    expect(host.querySelector('[data-testid="scenario-card"]')).toBeNull();
+    const manualCard = host.querySelector('[data-testid="manual-timeline-card"]');
+    expect(manualCard).not.toBeNull();
+    const link = manualCard!.querySelector<HTMLAnchorElement>(
+      '[data-testid="manual-timeline-link"]',
+    );
+    expect(link?.getAttribute('href')).toContain('%2Fapi%2Ftimeline%2Fmanual-99');
+    expect(manualCard!.querySelector('app-timeline-view')).not.toBeNull();
+  });
 });
 
 describe('readRunChoices', () => {

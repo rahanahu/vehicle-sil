@@ -12,6 +12,7 @@ function makeLoadDetail(
 ): VehicleSilTimelineLoadDetail {
   return {
     file: 'aeb.timeline.json',
+    manual: false,
     scenario: 'AEB emergency braking',
     status: 'failed',
     start: 0,
@@ -353,5 +354,84 @@ describe('TimelineView', () => {
     expect(aroundBtn).not.toBeNull();
     aroundBtn!.click();
     expect(jumpSpy).toHaveBeenLastCalledWith({ leadMs: 300, trailMs: 315 });
+  });
+
+  it('renders a manual-run timeline cleanly with no failure strip and working search/hide/restore', async () => {
+    emitLoad(
+      makeLoadDetail({
+        manual: true,
+        scenario: null,
+        status: 'manual',
+        recordedTo: 500,
+        end: 520,
+        stepCount: 0,
+        failure: null,
+        variables: [
+          {
+            name: 'Engine.engine.speed',
+            participant: 'Engine',
+            type: 'integer',
+            causality: 'output',
+            unit: 'rpm',
+            written: false,
+            watched: false,
+            recorded: true,
+            failing: false,
+            relatedToFailure: false,
+            changedNearFailure: false,
+          },
+          {
+            name: 'Dashboard.dashboard.engine_speed',
+            participant: 'Dashboard',
+            type: 'integer',
+            causality: 'output',
+            unit: 'rpm',
+            written: false,
+            watched: false,
+            recorded: true,
+            failing: false,
+            relatedToFailure: false,
+            changedNearFailure: false,
+          },
+        ],
+      }),
+    );
+    await fixture.whenStable();
+
+    expect(root().querySelector('[data-testid="timeline-failure-strip"]')).toBeNull();
+    expect(root().querySelector('[data-testid="timeline-preset-related"]')).toBeNull();
+    expect(root().querySelector('[data-testid="timeline-preset-changed"]')).toBeNull();
+    expect(
+      root().querySelector('[data-testid="timeline-visible-count"]')?.textContent?.trim(),
+    ).toBe('2 / 2');
+
+    // Search filters down to Dashboard signal
+    const search = root().querySelector<HTMLInputElement>(
+      '[data-testid="timeline-signal-search"]',
+    )!;
+    search.value = 'dashboard';
+    search.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    expect(
+      root().querySelector('[data-testid="timeline-visible-count"]')?.textContent?.trim(),
+    ).toBe('1 / 2');
+
+    // Inline hide and restore chip work on manual-run timelines
+    timelineEl()!.dispatchEvent(
+      new CustomEvent('variablehide', { detail: { variable: 'Dashboard.dashboard.engine_speed' } }),
+    );
+    await fixture.whenStable();
+    expect(
+      root().querySelector('[data-testid="timeline-visible-count"]')?.textContent?.trim(),
+    ).toBe('0 / 2');
+    const restoreChip = root().querySelector<HTMLButtonElement>(
+      '[data-testid="timeline-restore-var"][data-variable="Dashboard.dashboard.engine_speed"]',
+    );
+    expect(restoreChip).not.toBeNull();
+    restoreChip!.click();
+    await fixture.whenStable();
+    expect(
+      root().querySelector('[data-testid="timeline-visible-count"]')?.textContent?.trim(),
+    ).toBe('1 / 2');
   });
 });

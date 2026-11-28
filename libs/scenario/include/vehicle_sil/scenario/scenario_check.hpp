@@ -72,6 +72,11 @@ struct RecordedVariablesCheck
 [[nodiscard]] std::vector<bool> sample_every_step_participants(const config::CheckReport& check, const Scenario& scenario,
                                                                std::span<const RecordedVariable> recorded = {});
 
+/// Manual-run overload (no scenario): true for each participant named by `recorded` whose
+/// --describe says that it takes --sample-every-step (best-effort; never warns or fails).
+[[nodiscard]] std::vector<bool> sample_every_step_participants(const config::CheckReport& check,
+                                                               std::span<const RecordedVariable> recorded);
+
 /// What the check says about the samples `scenario` judges with (Finding::file is not set):
 /// - "scenario-samples-unsupported" (warning) for each participant whose values the scenario reads
 ///   and whose --describe does not say that it takes --sample-every-step. Only for a participant

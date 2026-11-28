@@ -881,3 +881,153 @@ test('representative failing run: extra non-judgment signal plus post-failure ta
     await stopRun(page, target, RUN_TIMEOUT);
   }
 });
+
+test('real manual run with Recorded signals: writes scenario-free timeline and opens cleanly in standard GUI logic analyzer', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const target: Target = { base: `http://127.0.0.1:${GUI_PORT}/`, token: guiToken() };
+  const headers = { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin };
+  const app = (await (
+    await page.request.get(new URL('api/app', target.base).href, { headers })
+  ).json()) as {
+    variables?: { available: boolean };
+    launcher?: { version?: { features?: string[] } };
+  };
+  const features = app.launcher?.version?.features ?? [];
+  test.skip(
+    !app.variables?.available ||
+      !features.includes('record-signals') ||
+      !features.includes('timeline') ||
+      !features.includes('manual-timeline'),
+    'launcher does not advertise variables / record-signals / timeline / manual-timeline',
+  );
+
+  await openRun(page);
+  await stopIfRunning(page);
+  try {
+    await choose(page, 'simulation.yaml');
+    // Ensure Scenario = None (manual run)
+    await page.getByTestId('scenario-select').click();
+    await page.getByRole('option', { name: 'なし（自分で操作する）', exact: true }).click();
+    await expect(page.getByTestId('record-after-fail-ms')).toHaveCount(0);
+
+    // Select Engine.engine.speed and Dashboard.dashboard.engine_speed in Recorded signals
+    const disclosure = page.getByTestId('record-signals');
+    await expect(disclosure).toBeVisible();
+    await disclosure.locator('summary').click();
+    for (const signalName of ['Engine.engine.speed', 'Dashboard.dashboard.engine_speed']) {
+      const box = page.getByTestId(`record-signal-option-${signalName}`).getByRole('checkbox');
+      if (!(await box.isChecked())) {
+        const recCheck = page.waitForResponse(
+          (r) =>
+            r.url().endsWith('/api/check') &&
+            Array.isArray((r.request().postDataJSON() as Record<string, unknown>)['record']) &&
+            (
+              (r.request().postDataJSON() as Record<string, unknown>)['record'] as string[]
+            ).includes(signalName),
+        );
+        await box.check();
+        await recCheck;
+      }
+    }
+    await expect(page.getByTestId('record-signals-count')).toContainText('2');
+    await expect(page.getByTestId('check-outcome')).toContainText('通った', {
+      timeout: RUN_TIMEOUT,
+    });
+
+    // Start paused at virtual time 0, write throttle changes, step to 600 ms, then stop cleanly
+    await page.getByTestId('start-paused').getByRole('checkbox').check();
+    await page.getByTestId('config-card').getByRole('radio', { name: '最速', exact: true }).click();
+    const runReqPromise = page.waitForRequest(
+      (r) => r.url().endsWith('/api/run') && r.method() === 'POST',
+    );
+    const runId = await start(page);
+    const runBody = (await runReqPromise).postDataJSON() as Record<string, unknown>;
+    expect(runBody['scenario']).toBeUndefined();
+    expect(runBody['record']).toEqual(['Dashboard.dashboard.engine_speed', 'Engine.engine.speed']);
+
+    await waitForVariables(page, target, 'Engine', RUN_TIMEOUT);
+    const w1 = await page.request.post(new URL('api/write', target.base).href, {
+      headers,
+      data: { run_id: runId, at_ms: 0, writes: { Engine: { 'engine.throttle': 60 } } },
+    });
+    expect(w1.status(), await w1.text()).toBe(200);
+    const w2 = await page.request.post(new URL('api/write', target.base).href, {
+      headers,
+      data: { run_id: runId, at_ms: 350, writes: { Engine: { 'engine.throttle': 15 } } },
+    });
+    expect(w2.status(), await w2.text()).toBe(200);
+
+    await page.getByTestId('step-ms').fill('600');
+    await page.getByTestId('step').click();
+    await expect(page.getByTestId('sim-time')).toContainText('0.600 s', { timeout: RUN_TIMEOUT });
+
+    await press(stopButton(page));
+    await expect(result(page, runId)).toBeVisible({ timeout: RUN_TIMEOUT });
+
+    // Verify manual-run timeline JSON has scenario: null, empty steps/lines, and real sampled waveforms
+    const tlResp = await page.request.get(new URL(`api/timeline/${runId}`, target.base).href, {
+      headers,
+    });
+    expect(tlResp.status()).toBe(200);
+    const tlJson = (await tlResp.json()) as {
+      scenario: unknown;
+      recorded_to_ms: number | null;
+      steps: unknown[];
+      lines: unknown[];
+      variables: { name: string; written: boolean; watched: boolean; recorded?: boolean }[];
+      series: { variable: string; source: string; points: [number, number][] }[];
+    };
+    expect(tlJson.scenario).toBeNull();
+    expect(tlJson.recorded_to_ms).toBeGreaterThanOrEqual(500);
+    expect(tlJson.steps).toEqual([]);
+    expect(tlJson.lines).toEqual([]);
+    for (const signalName of ['Engine.engine.speed', 'Dashboard.dashboard.engine_speed']) {
+      const v = tlJson.variables.find((item) => item.name === signalName);
+      expect(v).toMatchObject({ written: false, watched: false, recorded: true });
+      const s = tlJson.series.find(
+        (item) => item.variable === signalName && item.source === 'sampled',
+      );
+      expect(s, `sampled series for ${signalName}`).toBeDefined();
+      expect(s!.points.length).toBeGreaterThan(2);
+      expect(Math.max(...s!.points.map((p) => p[1]))).toBeGreaterThan(1000);
+    }
+
+    // Standard GUI logic analyzer opens automatically in the manual timeline card with zero scenario chrome or warning
+    const card = page.getByTestId('manual-timeline-card');
+    await expect(card).toBeVisible({ timeout: RUN_TIMEOUT });
+    await expect(page.getByTestId('scenario-card')).toHaveCount(0);
+    await expect(card.getByTestId('manual-timeline-link')).toHaveAttribute(
+      'href',
+      new RegExp(`%2Fapi%2Ftimeline%2F${runId}&`),
+    );
+    await expect(card.getByTestId('timeline-toggle')).toHaveAttribute('aria-expanded', 'true', {
+      timeout: RUN_TIMEOUT,
+    });
+    await expect(card.getByTestId('timeline-failure-strip')).toHaveCount(0);
+    const timeline = card.getByTestId('timeline-element');
+    await expect(timeline).toBeVisible();
+    await expect(timeline.locator('[data-testid="not-decided"]')).toHaveCount(0);
+    await expect(card.getByTestId('timeline-visible-count')).toContainText('2 / 2', {
+      timeout: RUN_TIMEOUT,
+    });
+    await expect(timeline).toContainText('Engine.engine.speed');
+    await expect(timeline).toContainText('Dashboard.dashboard.engine_speed');
+
+    // Search, hide (×), and restore work cleanly on the manual timeline
+    await card.getByTestId('timeline-signal-search').fill('dashboard.engine_speed');
+    await expect(card.getByTestId('timeline-visible-count')).toContainText('1 / 2');
+    await expect(timeline.locator('button.lane-hide')).toHaveCount(1);
+    await timeline.locator('button.lane-hide').first().click();
+    await expect(card.getByTestId('timeline-visible-count')).toContainText('0 / 2');
+    const restoreChip = card.locator(
+      '[data-testid="timeline-restore-var"][data-variable="Dashboard.dashboard.engine_speed"]',
+    );
+    await expect(restoreChip).toBeVisible();
+    await restoreChip.click();
+    await expect(card.getByTestId('timeline-visible-count')).toContainText('1 / 2');
+  } finally {
+    await stopRun(page, target, RUN_TIMEOUT);
+  }
+});

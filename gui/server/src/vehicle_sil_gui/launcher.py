@@ -53,8 +53,8 @@ CONTROL_SUMMARY_FIELD = "control_link"
 # A launcher with a control server (`control-server`) also has it during a scenario (read, time commands; it refuses
 # writes): the two features are always printed together.
 SCENARIO_STEP_EVENT = "scenario_step"
-# A scenario run's timeline ("Recording a scenario run on a timeline" in docs/simulation-run.md): run --scenario
-# --timeline <file> writes what the scenario wrote and saw to that file after the run.
+# A run's timeline ("Recording a scenario run on a timeline" in docs/simulation-run.md): run --timeline <file>
+# writes recorded signals (and scenario steps, when present) to that file after the run.
 FEATURE_TIMELINE = "timeline"
 FEATURE_RUN_STOP_AT = "run-stop-at"
 FEATURE_SCENARIO_HANDOVER = "scenario-handover"
@@ -62,6 +62,7 @@ FEATURE_SCENARIO_CASES = "scenario-cases"
 FEATURE_EXTERNAL_REGISTRY = "external-registry"
 FEATURE_RECORD_SIGNALS = "record-signals"
 FEATURE_RECORD_AFTER_FAIL = "record-after-fail"
+FEATURE_MANUAL_TIMELINE = "manual-timeline"
 
 
 def external_registry_uri_error(uri: str) -> str | None:

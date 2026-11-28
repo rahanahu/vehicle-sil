@@ -1090,6 +1090,8 @@ class Session:
             "scenario": self.scenario_summary(),
             **self.check_timing,
         }
+        if self.timeline_url is not None:
+            out["timeline_url"] = self.timeline_url
         if self.intent is not None:
             out["intent"] = _copy_intent(self.intent)
         if variables:

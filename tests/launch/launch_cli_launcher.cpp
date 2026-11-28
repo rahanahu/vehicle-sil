@@ -651,7 +651,8 @@ void usage(const Options& o)
                 "serve --case stdout:\n" + serveCase.standard_output);
     }
     expect_usage({"run", "a.yaml", "--timeline", "t.json", "--timeout-ms", "0"},
-                 "--timeline writes what a scenario did over the time: give --scenario <file> too, or leave --timeline out");
+                 "--timeline needs --scenario or --record: give --scenario <file> or at least one --record "
+                 "<participant>.<variable>, or leave --timeline out");
     expect_usage({"run", "a.yaml", "--scenario", "s.yaml", "--start-paused", "--speed", "fast"},
                  "--speed must be a number of simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, "
                  "2: twice as fast) or max (as fast as possible), not 'fast'");

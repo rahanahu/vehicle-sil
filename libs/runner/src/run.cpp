@@ -246,8 +246,9 @@ RunnerImpl::RunnerImpl(RunPlan plan, RunObservers observers, RunEvents* events, 
   ctx_{plan_.config(), plan_.check, plan_, observers_, events, plan_.scenario(), controls, controls.time()},
   outcome_(planned_outcome(plan_)), out_(ctx_), control_(ctx_, out_),
   samples_(participant_names(ctx_.config), detail::traffic_plan(ctx_.config, ctx_.check, ctx_.plan.members)), notes_(ctx_, participants_),
-  scenario_(ctx_, out_, control_, samples_), start_(ctx_, out_, control_, notes_, scenario_, participants_, outcome_),
-  watch_(ctx_, out_, notes_, samples_, scenario_, start_, participants_, outcome_),
+  scenario_(ctx_, out_, control_, samples_), recorder_(ctx_, control_, samples_),
+  start_(ctx_, out_, control_, notes_, scenario_, recorder_, participants_, outcome_),
+  watch_(ctx_, out_, notes_, samples_, scenario_, recorder_, start_, participants_, outcome_),
   participants_(ctx_, out_, outcome_, plan_.base)
 {
 }
@@ -297,7 +298,11 @@ RunOutcome RunnerImpl::run(const ControlServerStart& server)
     struct EndScenario
     {
         RunnerImpl& runner;
-        ~EndScenario() { runner.scenario_.end(); }
+        ~EndScenario()
+        {
+            runner.scenario_.end();
+            runner.recorder_.end();
+        }
     } const endScenario{*this};
     if (!prepared_)
     {
@@ -516,7 +521,7 @@ std::string RunnerImpl::write_timeline(const std::string& text)
 
 bool RunnerImpl::open_timeline()
 {
-    if (ctx_.plan.timeline.empty() || ctx_.scenario == nullptr)
+    if (ctx_.plan.timeline.empty() || (ctx_.scenario == nullptr && ctx_.plan.recorded_variables.empty()))
     {
         return true;
     }

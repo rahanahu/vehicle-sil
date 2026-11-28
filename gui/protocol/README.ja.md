@@ -95,7 +95,7 @@ API のバージョンは `vehicle_sil_gui`（今は 4）です。サーバー�
 | `GET api/dashboard?file=<configuration file>` | 設定ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}` | `dashboard*.json` |
 | `GET api/scenarios?file=<configuration file>` | 設定ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}` | `scenarios.json` |
 | `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`） | `recording.json` |
-| `GET api/timeline/<run_id>` | シナリオの実行の時間の軸のファイル。ランチャーが書いたそのまま（オブジェクトで包まない） | — |
+| `GET api/timeline/<run_id>` | 時間の軸を記録した実行のファイル。ランチャーが書いたそのまま（オブジェクトで包まない） | — |
 
 - `api/app` のレスポンスは、サーバーのバージョン、`instance`（起動ごとに変わる）、root、`initial_file`、ランチャー（`usable`、`problems`、`version --json` の内容）、変数を読み書きできるか（`variables`: `available`、できない理由 `reason`）、上限（`limits`）です。`limits` には `speed_min`、`speed_max`、`step_ms_max`、変数の `watches`、`watch_variables`、`watch_period_ms_min`、`watch_period_ms_max`、`writes_per_request`、`write_at_ms_max`、`write_timeout_s` などがあります。
 - `api/configs` の各ファイルは、`path`（root からの相対で `/` 区切り）、`modified`、`size`、`simulation`（先頭に `vehicle_sil_simulation` があるか）を持ちます。一覧の全体に `truncated` があります。
@@ -444,6 +444,7 @@ source の名前は要約の `log` と同じです（65 個目からの source �
 | `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数 |
 | `problems`、`problems_omitted` | サーバーの通知（`error` と同じ `{code, message, detail}`）を起きた順に並べたものと、上限を超えて覚えていない数 |
 | `scenario` | シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では `null`（下の「シナリオ」） |
+| `timeline_url` | サーバーがその実行の時間の軸のファイルを配る先（`api/timeline/<run_id>`）の任意のトップレベルフィールド。時間の軸を記録して終わった実行で設定され、シナリオ実行（`scenario.timeline_url` と同じ値）と、`manual-timeline` を持つランチャーでの `record` つき手動実行の両方で使える。利用可能になる前や旧サーバーでは省略 |
 | `intent` | この実行を開始したときの任意の条件（`variant`、`scenario`、`case`、`after_scenario`、`record`、`record_after_fail_ms`、`params`、`disable`、`enable`、`manual`、`strict`、`connect`、`time_policy`、`speed`、`start_paused`、`stop_at_ms`、`late_tolerance_ms` など）。`scenario` は GUI API のルート相対パスで保持するため、`{"file": session.file, ...session.intent}` をそのまま `POST api/run` へ渡して再実行できる。旧サーバーでは省略または `null` |
 
 フィールドごとの補足です。
@@ -739,10 +740,10 @@ participant ごとの `state` は次のとおりです。
 
 ### シナリオの実行の時間の軸（`api/timeline`）
 
-ランチャーの `features` に `timeline` があると、サーバーはシナリオつきの実行のすべてに `--timeline <ファイル>` を付けます。ファイルはサーバーの一時ディレクトリに置きます。実行の結果の `result.scenario.timeline` と、ランチャーの `log` の行 `timeline: <ファイル>` が、そのファイルを指します（[docs/ja/simulation-run.md](../../docs/ja/simulation-run.md#シナリオの実行を時間の軸で記録する--timeline) の「シナリオの実行を時間の軸で記録する」）。`timeline` のないランチャーには `--timeline` を付けず、その実行には時間の軸がありません。
+ランチャーの `features` に `timeline` があると、サーバーはシナリオつきの実行のすべてに `--timeline <ファイル>` を付け、さらに `manual-timeline` もある場合は、`record` に 1 つ以上の記録対象信号を指定した手動実行（`scenario` 省略）にも `--timeline <ファイル>` を付けます。ファイルはサーバーの一時ディレクトリに置きます。実行の結果の `result.scenario.timeline`（シナリオ実行）またはトップレベルの `result.timeline`（手動実行）と、ランチャーの `log` の行 `timeline: <ファイル>` が、そのファイルを指します（[docs/ja/simulation-run.md](../../docs/ja/simulation-run.md#シナリオの実行を時間の軸で記録する--timeline) の「シナリオの実行を時間の軸で記録する」）。`timeline` のないランチャー（または手動実行で `manual-timeline` のないランチャー）には `--timeline` を付けず、その実行には時間の軸がありません。
 
-- 実行が終わったら、ランチャーがファイルを全部書けていれば、サーバーはファイルを残します。ファイルが空でなく、結果に指摘 `timeline-write` がないことです。このとき、要約の `scenario.timeline_url` が `api/timeline/<run_id>` になります。
-- `GET api/timeline/<run_id>` は、ファイルを `application/json` で、`Content-Disposition: inline; filename="<シナリオの名前>.timeline.json"` を付けて返します。ほかの `api/` と同じく、トークンが要ります。残したファイルのない実行（シナリオがない、`timeline` のないランチャー、まだ動いている、ファイルを全部書けなかった、サーバーが出していない id、消えたファイル）は 404 `no-timeline` です。
+- 実行が終わったら、ランチャーがファイルを全部書けていれば、サーバーはファイルを残します。ファイルが空でなく、結果に指摘 `timeline-write` がないことです。このとき、要約のトップレベルの `timeline_url` が `api/timeline/<run_id>` になります（シナリオ実行では `scenario.timeline_url` も同じ値になります）。
+- `GET api/timeline/<run_id>` は、ファイルを `application/json` で、`Content-Disposition: inline; filename="<シナリオ名または構成ファイル名>.timeline.json"` を付けて返します。ほかの `api/` と同じく、トークンが要ります。残したファイルのない実行（`record` のない手動実行、`timeline` や `manual-timeline` のないランチャー、まだ動いている、ファイルを全部書けなかった、サーバーが出していない id、消えたファイル）は 404 `no-timeline` です。
 - サーバーは、ファイルを書いた最後の 4 つの実行のファイルを残します。5 つ目を残すときに、いちばん古いものを消します。サーバーが止まるときに、全部を消します。
 - ファイルを図にするページは、トークンなしで `timeline/` に配ります（`timeline/`、`timeline/timeline.html`、`timeline/page.js`、`timeline/vehicle-sil-timeline.js`。最後のものは要素 `<vehicle-sil-timeline>` で、サーバーの画面も読めます）。`Host` の確かめとヘッダーは、画面のファイルと同じです。ページは、画面と同じ所からトークンを読み（URL の `#token=`、なければタブの sessionStorage の、`takeToken` と同じ鍵）、`Authorization: Bearer` で送ります。開くときは `timeline/?src=/api/timeline/<run_id>` です。
 

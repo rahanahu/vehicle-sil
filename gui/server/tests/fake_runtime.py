@@ -31,6 +31,7 @@ DEFAULT_FEATURES = (
     "external-registry",
     "record-signals",
     "record-after-fail",
+    "manual-timeline",
 )
 
 

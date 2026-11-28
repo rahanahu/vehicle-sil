@@ -707,6 +707,11 @@ void detail::write_run_json(vehicle_sil::json::JsonWriter& w, std::string_view k
         // Only with --scenario: a result without one is as it was before scenarios.
         detail::write_scenario_json(w, "scenario", *report.run->scenario.result, report.run->scenario.timeline);
     }
+    else if (report.run && !report.run->scenario.timeline.empty())
+    {
+        // Only when a manual run wrote a timeline: existing run --json without --timeline is unchanged.
+        w.string("timeline", report.run->scenario.timeline);
+    }
     w.end_object();
 }
 

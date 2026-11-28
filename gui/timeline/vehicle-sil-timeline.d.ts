@@ -116,9 +116,11 @@ export interface VehicleSilTimelineFocusOptions {
 export interface VehicleSilTimelineLoadDetail {
   /** The file's name (file-name, or the name the server gives), or null. */
   file: string | null;
+  /** True when the timeline was recorded from a manual run without a scenario (`scenario === null`). */
+  manual: boolean;
   /** The scenario's name, or null. */
   scenario: string | null;
-  /** The scenario's result as the file writes it: 'passed', 'failed', 'incomplete', 'not_run' or another. */
+  /** The scenario's result as the file writes it: 'passed', 'failed', 'incomplete', 'not_run', 'manual' (when `manual` is true), or another. */
   status: string;
   /** The whole run that can be shown, in virtual ms. */
   start: number;

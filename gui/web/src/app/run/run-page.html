@@ -123,6 +123,26 @@
           </mat-card-content>
         </mat-card>
       }
+    } @else if (session.timelineUrl; as url) {
+      <mat-card appearance="outlined" class="wide-scenario-card" data-testid="manual-timeline-card">
+        <mat-card-header class="manual-timeline-header">
+          <mat-card-title><h2 id="run-timeline" tabindex="-1" i18n>時間の軸</h2></mat-card-title>
+          <a
+            class="timeline-link"
+            [href]="manualTimelineHref(url)"
+            target="_blank"
+            rel="opener"
+            data-testid="manual-timeline-link"
+            i18n-title
+            title="記録した信号を時間の軸の図で見る（新しいタブ）"
+            i18n
+            >時間の軸</a
+          >
+        </mat-card-header>
+        <mat-card-content>
+          <app-timeline-view [timelineUrl]="url" [autoExpand]="true" />
+        </mat-card-content>
+      </mat-card>
     }
   }
 
@@ -402,7 +422,7 @@
               </p>
             }
           }
-          @if (!running() && recordSignalsSupported() && chosenScenario() !== null) {
+          @if (!running() && recordSignalsAvailable()) {
             <app-record-signals
               [file]="selected()"
               [check]="selectedCheck()"

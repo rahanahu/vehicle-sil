@@ -1204,6 +1204,7 @@ class SessionWsSummary(ContractModel):
     problems: list[SessionProblem]
     problems_omitted: NonNegInt
     scenario: SessionScenarioSummary | None
+    timeline_url: Utf8Str | None = None
     stop_at_ms: StepMs | None = None
     intent: SessionIntentSummary | None = None
 

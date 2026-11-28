@@ -138,10 +138,35 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits,
     waiting_dither_.resize(count);
 }
 
+TimelineRecord::TimelineRecord(std::span<const RecordedVariable> recorded, TimelineLimits limits) :
+  limits_(limits)
+{
+    for (const RecordedVariable& rv : recorded)
+    {
+        const bool already = std::any_of(extra_variables_.begin(), extra_variables_.end(),
+                                         [&rv](const RecordedVariable& e) { return e.text == rv.text; });
+        if (!already)
+        {
+            extra_variables_.push_back(rv);
+        }
+    }
+    const std::size_t total = extra_variables_.size();
+    written_.resize(total);
+    sampled_.resize(total);
+    watched_.assign(total, false);
+    recorded_.assign(total, true);
+    series_.reserve(total);
+    for (std::size_t v = 0; v < total; ++v)
+    {
+        sampled_[v] = series_.size();
+        series_.push_back(Series{v, true});
+    }
+}
+
 std::optional<std::uint64_t> TimelineRecord::written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion,
                                                      double base)
 {
-    if (!recorded_to_)
+    if (!closed_)
     {
         // The first write of a line is the one for the time it was put at.
         for (auto line = lines_.rbegin(); line != lines_.rend() && line->from == at; ++line)
@@ -162,7 +187,7 @@ std::optional<std::uint64_t> TimelineRecord::written(std::size_t step, std::size
             lines_.push_back(std::move(line));
         }
     }
-    if (recorded_to_ || variable >= written_.size() || !written_[variable])
+    if (closed_ || variable >= written_.size() || !written_[variable])
     {
         return std::nullopt;
     }
@@ -195,7 +220,7 @@ std::optional<std::size_t> TimelineRecord::point_of(std::size_t variable, std::u
 
 void TimelineRecord::sampled(std::size_t variable, SimTime at, const control::Value& value)
 {
-    if (recorded_to_ || variable >= sampled_.size() || !sampled_[variable])
+    if (closed_ || variable >= sampled_.size() || !sampled_[variable])
     {
         return;
     }
@@ -236,7 +261,7 @@ void TimelineRecord::sampled(std::size_t variable, SimTime at, const control::Va
 
 void TimelineRecord::line(Line line)
 {
-    if (!recorded_to_)
+    if (!closed_)
     {
         lines_.push_back(std::move(line));
     }
@@ -244,7 +269,7 @@ void TimelineRecord::line(Line line)
 
 void TimelineRecord::dither(Line line)
 {
-    if (!recorded_to_ && line.variable < waiting_dither_.size())
+    if (!closed_ && line.variable < waiting_dither_.size())
     {
         line.dither = true;
         line.sent = false;
@@ -254,7 +279,7 @@ void TimelineRecord::dither(Line line)
 
 void TimelineRecord::watch(std::size_t step, Watch watch)
 {
-    if (!recorded_to_ && step < watches_.size())
+    if (!closed_ && step < watches_.size())
     {
         watches_[step] = watch;
     }
@@ -272,7 +297,7 @@ std::uint64_t TimelineRecord::dropped() const noexcept
 
 void TimelineRecord::failed(std::size_t step, TimelineFailure failure)
 {
-    if (!recorded_to_ && (step < failures_.size() || step == kNoStep))
+    if (!closed_ && (step < failures_.size() || step == kNoStep))
     {
         // The points that are not known to be applied, each by what written() named it (not by
         // its time: a variable can have several points of one time).
@@ -293,19 +318,36 @@ void TimelineRecord::failed(std::size_t step, TimelineFailure failure)
     }
 }
 
-void TimelineRecord::close(SimTime to)
+void TimelineRecord::close(std::optional<SimTime> to)
 {
-    if (recorded_to_)
+    if (closed_)
     {
         return;
     }
+    closed_ = true;
     recorded_to_ = to;
-    // A line put after `to` is of a write for a time the controller's step let the engine reach
+    if (!to)
+    {
+        lines_.clear();
+        for (Series& series : series_)
+        {
+            series.written.clear();
+            series.samples.clear();
+            series.droppable = 0;
+            series.sample_count = 0;
+            series.first_sample.reset();
+            series.last_sample.reset();
+        }
+        total_ = 0;
+        return;
+    }
+    const SimTime limit = *to;
+    // A line put after `limit` is of a write for a time the controller's step let the engine reach
     // early; with a shorter step it is not there. A line of which no write went out was put, and
     // then the scenario failed at a write before its own. Canonicalize order across differing ECU
     // applied steps so lines[] stays strictly ordered by (from, dither, step, part) and invariant
     // to controller time_step_ms.
-    std::erase_if(lines_, [to](const Line& line) { return line.from > to || !line.sent; });
+    std::erase_if(lines_, [limit](const Line& line) { return line.from > limit || !line.sent; });
     std::stable_sort(lines_.begin(), lines_.end(), [](const Line& a, const Line& b) {
         const auto key = [](const Line& line) {
             return std::tuple{line.from, line.dither, line.dither ? std::size_t{0} : line.step,
@@ -316,23 +358,23 @@ void TimelineRecord::close(SimTime to)
     for (Series& series : series_)
     {
         std::erase_if(series.written, [&](const Written& point) {
-            if (point.at > to && point.motion)
+            if (point.at > limit && point.motion)
             {
                 --series.droppable;
             }
-            return point.at > to;
+            return point.at > limit;
         });
-        while (!series.samples.empty() && series.samples.back().first > to)
+        while (!series.samples.empty() && series.samples.back().first > limit)
         {
             series.sample_count -= series.samples.back().count;
             series.samples.pop_back();
             --series.droppable;
         }
-        if (!series.samples.empty() && series.samples.back().last > to)
+        if (!series.samples.empty() && series.samples.back().last > limit)
         {
-            // Its samples come at one distance: those up to `to` can be counted.
+            // Its samples come at one distance: those up to `limit` can be counted.
             Sampled& back = series.samples.back();
-            const std::uint64_t kept = static_cast<std::uint64_t>((to - back.first).count() / back.interval.count()) + 1;
+            const std::uint64_t kept = static_cast<std::uint64_t>((limit - back.first).count() / back.interval.count()) + 1;
             series.sample_count -= back.count - kept;
             back.count = kept;
             back.last = back.first + static_cast<std::int64_t>(kept - 1) * back.interval;

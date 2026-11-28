@@ -132,6 +132,11 @@
       "The scenario's steps and variables over virtual time. The tables below hold the same contents.",
     'page.cannotShow': 'This file cannot be shown. ',
     'page.noName': '(a scenario without a name)',
+    'manual.title': 'Manual run',
+    'manual.titleFile': ({ file }) => `Manual run (${file})`,
+    'manual.recordedTo': ({ count, to }) =>
+      `Recorded ${count} signal${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.nothingRecorded': 'Manual run: no samples recorded',
     'fact.file': 'timeline file',
     'fact.scenario': 'scenario',
     'fact.case': 'case',
@@ -223,6 +228,7 @@
     // --- the chart
     'chart.inputs': 'Inputs: what the scenario sent (and saw)',
     'chart.others': 'Outputs and other variables: what the scenario saw',
+    'chart.recorded': 'Recorded variables',
     'chart.noMatch': ({ names, have }) =>
       `No variable of this file matches ${names} (the variables option), so it has no lane. The file has ${have}.`,
     'chart.showing': ({ from, to, start, end }) => `Showing ${from} to ${to} of ${start} to ${end}`,
@@ -484,6 +490,10 @@
     'page.chartLabel': 'シナリオの手順と変数を仮想時刻で並べた図。下の表に同じ内容があります。',
     'page.cannotShow': 'このファイルは表示できません。',
     'page.noName': '（名前のないシナリオ）',
+    'manual.title': '手動実行',
+    'manual.titleFile': ({ file }) => `手動実行（${file}）`,
+    'manual.recordedTo': ({ count, to }) => `${count} 個の信号を ${to} まで記録しました`,
+    'manual.nothingRecorded': '手動実行: 記録されたサンプルはありません',
     'fact.file': '時間の軸のファイル',
     'fact.scenario': 'シナリオ',
     'fact.case': 'ケース',
@@ -574,6 +584,7 @@
     // --- 図
     'chart.inputs': '入力: シナリオが送った値（と見た値）',
     'chart.others': '出力とほかの変数: シナリオが見た値',
+    'chart.recorded': '記録した変数',
     'chart.noMatch': ({ names, have }) =>
       `${names} に当たる変数がこのファイルにないので（variables の設定）、そのレーンはありません。ファイルの変数: ${have}。`,
     'chart.showing': ({ from, to, start, end }) =>

@@ -137,6 +137,11 @@
       "The scenario's steps and variables over virtual time. The tables below hold the same contents.",
     'page.cannotShow': 'This file cannot be shown. ',
     'page.noName': '(a scenario without a name)',
+    'manual.title': 'Manual run',
+    'manual.titleFile': ({ file }) => `Manual run (${file})`,
+    'manual.recordedTo': ({ count, to }) =>
+      `Recorded ${count} signal${count === 1 ? '' : 's'} up to ${to}`,
+    'manual.nothingRecorded': 'Manual run: no samples recorded',
     'fact.file': 'timeline file',
     'fact.scenario': 'scenario',
     'fact.case': 'case',
@@ -228,6 +233,7 @@
     // --- the chart
     'chart.inputs': 'Inputs: what the scenario sent (and saw)',
     'chart.others': 'Outputs and other variables: what the scenario saw',
+    'chart.recorded': 'Recorded variables',
     'chart.noMatch': ({ names, have }) =>
       `No variable of this file matches ${names} (the variables option), so it has no lane. The file has ${have}.`,
     'chart.showing': ({ from, to, start, end }) => `Showing ${from} to ${to} of ${start} to ${end}`,
@@ -489,6 +495,10 @@
     'page.chartLabel': 'シナリオの手順と変数を仮想時刻で並べた図。下の表に同じ内容があります。',
     'page.cannotShow': 'このファイルは表示できません。',
     'page.noName': '（名前のないシナリオ）',
+    'manual.title': '手動実行',
+    'manual.titleFile': ({ file }) => `手動実行（${file}）`,
+    'manual.recordedTo': ({ count, to }) => `${count} 個の信号を ${to} まで記録しました`,
+    'manual.nothingRecorded': '手動実行: 記録されたサンプルはありません',
     'fact.file': '時間の軸のファイル',
     'fact.scenario': 'シナリオ',
     'fact.case': 'ケース',
@@ -579,6 +589,7 @@
     // --- 図
     'chart.inputs': '入力: シナリオが送った値（と見た値）',
     'chart.others': '出力とほかの変数: シナリオが見た値',
+    'chart.recorded': '記録した変数',
     'chart.noMatch': ({ names, have }) =>
       `${names} に当たる変数がこのファイルにないので（variables の設定）、そのレーンはありません。ファイルの変数: ${have}。`,
     'chart.showing': ({ from, to, start, end }) =>
@@ -1861,7 +1872,7 @@ tr.selected td {
     if (data.stage !== 'run') {
       return { error: t('read.otherStage', { label, stage: JSON.stringify(data.stage) }) };
     }
-    if (!isObject(data.scenario)) {
+    if (data.scenario !== null && !isObject(data.scenario)) {
       return { error: t('read.noScenario', { label, how }) };
     }
     for (const key of ['variables', 'steps', 'series']) {
@@ -2504,7 +2515,7 @@ tr.selected td {
     const at = f && isNum(f.at_ms) ? f.at_ms : isNum(step.at_ms) ? step.at_ms : null;
     return {
       step,
-      file: stepFile(step, tl.scenario.file),
+      file: stepFile(step, tl.scenario?.file ?? null),
       name: nonEmptyString(step.name),
       callStack: Array.isArray(step.call_stack) ? step.call_stack.filter(isObject) : [],
       at,
@@ -2529,7 +2540,7 @@ tr.selected td {
     if (naf === null || naf < 1 || naf > series.t.length) return false;
     const i = naf - 1;
     if (series.applied && series.applied.get(i) === true) return true;
-    if (tl.scenario.status === 'passed') return true;
+    if (tl.scenario?.status === 'passed') return true;
     if (series.dithered || v.lines.some((l) => l.kind === 'dither')) return false;
     const t = series.t[i];
     const of = v.lines.filter(
@@ -2549,8 +2560,13 @@ tr.selected td {
 
   /** Builds everything the page draws from a file that readTimeline() accepted. */
   function buildModel(tl) {
-    const sc = tl.scenario;
-    const recordedTo = isNum(sc.recorded_to_ms) ? sc.recorded_to_ms : null;
+    const sc = isObject(tl.scenario) ? tl.scenario : null;
+    const isManual = sc === null;
+    const recordedTo = isNum(tl.recorded_to_ms)
+      ? tl.recorded_to_ms
+      : sc && isNum(sc.recorded_to_ms)
+        ? sc.recorded_to_ms
+        : null;
     const timeStep = isNum(tl.time_step_ms) && tl.time_step_ms > 0 ? tl.time_step_ms : null;
     const vars = [];
     const byName = new Map();
@@ -2708,11 +2724,12 @@ tr.selected td {
         : [];
     return {
       tl,
-      name: nonEmptyString(sc.name),
-      caseName: nonEmptyString(sc.case),
-      status: sc.status,
+      isManual,
+      name: sc ? nonEmptyString(sc.name) : null,
+      caseName: sc ? nonEmptyString(sc.case) : null,
+      status: sc ? sc.status : null,
       recordedTo,
-      overAt: isNum(sc.over_at_ms) ? sc.over_at_ms : null,
+      overAt: sc && isNum(sc.over_at_ms) ? sc.over_at_ms : null,
       timeStep,
       steps: tl.steps,
       simGroups: sameStartGroups(tl.steps),
@@ -3073,8 +3090,9 @@ tr.selected td {
     const nearWindow = Math.max(150, (model.timeStep ?? 10) * 15);
     return {
       file: file ?? null,
+      manual: Boolean(model.isManual),
       scenario: model.name ?? null,
-      status: model.status,
+      status: model.status ?? 'manual',
       start: model.domain[0],
       end: model.domain[1],
       recordedTo: model.recordedTo,
@@ -3690,16 +3708,24 @@ tr.selected td {
 
   function renderHeader(m) {
     const tl = m.tl;
-    $('title').textContent = m.name ?? t('page.noName');
-    const status = h('span', {
-      class: `badge st-${statusClass(m.status)}`,
-      title: String(m.status),
-      text: statusWord(m.status),
-    });
+    const sc = isObject(tl.scenario) ? tl.scenario : null;
+    const configFile = nonEmptyString(tl.file);
+    $('title').textContent = m.isManual
+      ? configFile
+        ? t('manual.titleFile', { file: configFile })
+        : t('manual.title')
+      : (m.name ?? t('page.noName'));
+    const status = m.isManual
+      ? null
+      : h('span', {
+          class: `badge st-${statusClass(m.status)}`,
+          title: String(m.status),
+          text: statusWord(m.status),
+        });
     const facts = [
       ['fact.file', state.file],
-      ['fact.scenario', tl.scenario.file],
-      ['fact.case', nonEmptyString(tl.scenario.case)],
+      ['fact.scenario', sc ? sc.file : null],
+      ['fact.case', sc ? nonEmptyString(sc.case) : null],
       ['fact.configuration', tl.file],
       ['fact.variant', tl.variant],
       ['fact.timeStep', m.timeStep !== null ? fmtMs(m.timeStep) : null],
@@ -3717,8 +3743,9 @@ tr.selected td {
       ['fact.version', tl.vehicle_sil],
     ].filter(([, v]) => v !== null && v !== undefined);
     const params = Array.isArray(tl.params) ? tl.params.filter(isObject) : [];
-    $('facts').replaceChildren(
-      status,
+    const items = [];
+    if (status) items.push(status);
+    items.push(
       ...facts.map(([k, v]) =>
         h('span', { class: 'fact' }, h('span', { class: 'muted', text: `${t(k)} ` }), String(v)),
       ),
@@ -3732,6 +3759,7 @@ tr.selected td {
         ),
       ),
     );
+    $('facts').replaceChildren(...items);
   }
 
   function statusClass(st) {
@@ -3745,14 +3773,15 @@ tr.selected td {
     if (f) {
       const step = f.step;
       const stepName = nonEmptyString(step.name);
-      const failFile = stepFile(step, m.tl.scenario.file) || '';
+      const scFile = m.tl.scenario?.file ?? null;
+      const failFile = stepFile(step, scFile) || '';
       const failLine = isNum(step.line) ? step.line : null;
       const failWhere =
         failFile || failLine !== null
           ? t('failure.where', { line: failLine, file: failFile })
           : null;
       const where = [step.kind, stepName, failWhere, f.code].filter(Boolean).join(' · ');
-      const frames = callStackFrames(step.call_stack, m.tl.scenario.file);
+      const frames = callStackFrames(step.call_stack, scFile);
       parts.push(
         h(
           'div',
@@ -3771,6 +3800,21 @@ tr.selected td {
             : null,
           f.conditions.length ? renderConditions(f, m) : null,
           f.writes.length ? renderWrites(f) : null,
+        ),
+      );
+    } else if (m.isManual) {
+      const heading =
+        m.recordedTo !== null
+          ? t('manual.recordedTo', { count: m.vars.length, to: fmtMs(m.recordedTo) })
+          : t('manual.nothingRecorded');
+      parts.push(
+        h(
+          'div',
+          { class: 'banner', 'data-testid': 'manual-summary' },
+          h('h3', { text: heading }),
+          ...m.findings
+            .filter((x) => x.severity === 'error' && typeof x.message === 'string')
+            .map((x) => h('p', { class: 'message', text: `${x.code}: ${x.message}` })),
         ),
       );
     } else if (m.status === 'passed') {
@@ -4011,6 +4055,7 @@ tr.selected td {
   // --- the tables (the same contents as the chart)
 
   function renderTables(m) {
+    const scFile = m.tl.scenario?.file ?? null;
     const stepRows = m.steps.map((st) => {
       const result =
         st.message ??
@@ -4021,13 +4066,9 @@ tr.selected td {
       const stFile = nonEmptyString(st.file);
       const stLine = isNum(st.line) ? String(st.line) : '';
       const lineCell =
-        stFile && stFile !== m.tl.scenario.file
-          ? stLine
-            ? `${stFile}:${stLine}`
-            : stFile
-          : stLine;
+        stFile && stFile !== scFile ? (stLine ? `${stFile}:${stLine}` : stFile) : stLine;
       const stName = nonEmptyString(st.name);
-      const stFrames = callStackFrames(st.call_stack, m.tl.scenario.file);
+      const stFrames = callStackFrames(st.call_stack, scFile);
       return h(
         'tr',
         {
@@ -4103,8 +4144,7 @@ tr.selected td {
     const findingRows = m.findings.map((x) => {
       const fFile = nonEmptyString(x.file);
       const fLine = x.line === null || x.line === undefined ? '' : String(x.line);
-      const fWhere =
-        fFile && fFile !== m.tl.scenario.file ? (fLine ? `${fFile}:${fLine}` : fFile) : fLine;
+      const fWhere = fFile && fFile !== scFile ? (fLine ? `${fFile}:${fLine}` : fFile) : fLine;
       return h(
         'tr',
         {},
@@ -4136,6 +4176,21 @@ tr.selected td {
             )
           : h('p', { class: 'muted', text: t('tables.none') }),
       );
+    if (m.isManual) {
+      const children = [];
+      if (findingRows.length > 0) {
+        children.push(
+          table(
+            t('tables.findings'),
+            cols('severity', 'code', 'line', 'message'),
+            findingRows,
+            'findings-table',
+          ),
+        );
+      }
+      $('tables').replaceChildren(...children);
+      return;
+    }
     $('tables').replaceChildren(
       table(
         t('tables.steps'),
@@ -4425,7 +4480,14 @@ tr.selected td {
       children.push(...inputs.map((v) => variableLane(m, v, scale)));
     }
     if (others.length) {
-      if (groups) children.push(h('div', { class: 'group', text: t('chart.others') }));
+      if (groups) {
+        children.push(
+          h('div', {
+            class: 'group',
+            text: t(m.isManual ? 'chart.recorded' : 'chart.others'),
+          }),
+        );
+      }
       children.push(...others.map((v) => variableLane(m, v, scale)));
     }
     // Option A: shared-axis event lane sits BELOW the waveform lanes (and is omitted cleanly when steps is empty).
@@ -4612,7 +4674,7 @@ tr.selected td {
         cg,
         [
           t('step.simultaneousHeading', { at: fmtMs(cl.at), count: cl.steps.length }),
-          ...cl.steps.map((st) => stepTitle(st, m.tl.scenario.file)),
+          ...cl.steps.map((st) => stepTitle(st, m.tl.scenario?.file ?? null)),
         ].join('\n'),
       );
       listen(cg, 'keydown', (e) => {
@@ -4723,9 +4785,9 @@ tr.selected td {
         );
       }
       const stName = nonEmptyString(it.st.name);
-      const stFrames = callStackFrames(it.st.call_stack, m.tl.scenario.file);
+      const stFrames = callStackFrames(it.st.call_stack, m.tl.scenario?.file ?? null);
       const lines = [
-        stepTitle(it.st, m.tl.scenario.file),
+        stepTitle(it.st, m.tl.scenario?.file ?? null),
         stName,
         String(it.st.text ?? ''),
         ...stFrames.map((fr) => `${t('failure.calledFrom')} ${fr}`),
@@ -4974,7 +5036,7 @@ tr.selected td {
       if (!isNum(l.from_ms)) continue;
       const known = knows(KNOWN.lineKind, l.kind);
       const x0 = scale.x(l.from_ms);
-      const text = lineTitle(l, m.tl.scenario.file);
+      const text = lineTitle(l, m.tl.scenario?.file ?? null);
       const g = tooltip(
         s('g', { class: `line-mark line-${known ? l.kind : 'unknown'}` }, svg),
         text,
@@ -5637,9 +5699,9 @@ tr.selected td {
 
   /** Renders one step's details body (heading, call stack, watch conditions or text). */
   function renderStepBlock(m, step, selected, clickable) {
-    const title = stepTitle(step, m.tl.scenario.file);
+    const title = stepTitle(step, m.tl.scenario?.file ?? null);
     const stepName = nonEmptyString(step.name);
-    const frames = callStackFrames(step.call_stack, m.tl.scenario.file);
+    const frames = callStackFrames(step.call_stack, m.tl.scenario?.file ?? null);
     const timings = t('step.times', {
       start: fmtMs(step.start_ms),
       decided: fmtMs(step.at_ms),

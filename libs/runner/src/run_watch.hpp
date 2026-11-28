@@ -9,6 +9,7 @@
 #include "run_notes.hpp"
 #include "run_output.hpp"
 #include "run_participants.hpp"
+#include "run_recorder.hpp"
 #include "vehicle_sil/runner/detail/run_samples.hpp"
 #include "run_scenario.hpp"
 #include "run_start.hpp"
@@ -44,9 +45,9 @@ class RunWatch
 {
 public:
     RunWatch(const RunContext& ctx, RunOutput& out, RunNotes& notes, RunSamples& samples, RunScenario& scenario,
-             const RunStart& start, RunParticipants& participants, RunOutcome& outcome) :
-      ctx_(ctx), out_(out), notes_(notes), samples_(samples), scenario_(scenario), start_(start), participants_(participants),
-      outcome_(outcome)
+             RunRecorder& recorder, const RunStart& start, RunParticipants& participants, RunOutcome& outcome) :
+      ctx_(ctx), out_(out), notes_(notes), samples_(samples), scenario_(scenario), recorder_(recorder), start_(start),
+      participants_(participants), outcome_(outcome)
     {
     }
 
@@ -76,6 +77,7 @@ private:
     RunNotes& notes_;
     RunSamples& samples_;
     RunScenario& scenario_;
+    RunRecorder& recorder_;
     const RunStart& start_;
     RunParticipants& participants_;
     RunOutcome& outcome_; ///< the main thread's
