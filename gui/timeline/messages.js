@@ -115,6 +115,12 @@
     'page.showFailure': 'Show the failure',
     'page.whole': 'Whole run',
     'page.zoomOut': 'Zoom out',
+    'page.panLeft': 'Pan left',
+    'page.panRight': 'Pan right',
+    'page.unpinCursor': 'Unpin cursor',
+    'page.clearRef': 'Clear Δt',
+    'page.hint':
+      'Drag: zoom · Shift+drag: pan · Ctrl+wheel: zoom · Click: pin cursor · Shift+click: Δt reference · Esc: unpin',
     'page.help':
       "Steps: a bar from start to end, a tick where the result was decided, a thin line on to a wait's limit. " +
       'Shaded: the values a condition allows (green: it held; red: it did not; grey: not decided by it). ' +
@@ -151,6 +157,7 @@
       hasLine(line) ? (file ? `line ${line} of ${file}` : `line ${line}`) : file || '',
     'failure.calledFrom': 'Called from:',
     'passed.heading': ({ count }) => `Passed: ${count} step${count === 1 ? '' : 's'}`,
+    'passed.noSteps': 'Passed (no scenario steps)',
     'passed.skipped': ({ count }) => `${count} skipped (see the table of steps).`,
     'notDecided.heading': ({ status }) => `Scenario ${status}`,
     'notDecided.notRun':
@@ -220,6 +227,12 @@
     'chart.showing': ({ from, to, start, end }) => `Showing ${from} to ${to} of ${start} to ${end}`,
     'chart.virtualTime': 'Virtual time',
     'chart.cursor': ({ at }) => `Cursor ${at}`,
+    'chart.cursorPinned': ({ at }) => `Pinned ${at}`,
+    'chart.cursorDelta': ({ at, delta }) => `${at} (Δt ${delta})`,
+    'chart.unrecorded': 'unrecorded',
+    'chart.hiddenVars': ({ count }) => `Hidden (${count}):`,
+    'chart.restoreVar': ({ name }) => `Show ${name} again`,
+    'chart.restoreAll': 'Restore all',
     'chart.steps': 'Steps',
     'step.title': ({ index, kind, line, status }) =>
       hasLine(line)
@@ -231,6 +244,12 @@
         : `Step ${index} (${kind}, ${file}): ${status}`,
     'step.times': ({ start, decided, end }) => `start ${start}, decided ${decided}, end ${end}`,
     'step.details': 'Step details',
+    'step.simultaneousBadge': ({ count }) => `×${count}`,
+    'step.simultaneousLabel': ({ at, count }) => `${count} simultaneous events at ${at}`,
+    'step.simultaneousHeading': ({ at, count }) =>
+      `${count} events at the same virtual time (${at}) — unordered; display order does not imply causal order`,
+    'step.ariaLabel': ({ index, label, status, at }) =>
+      `Step ${index}: ${label} (${status}, ${at})`,
     'step.matchOnce': ({ from, to }) =>
       `All conditions must match together at least once between ${from} and ${to}`,
     'step.matchAt': ({ from }) => `Must match at ${from}`,
@@ -238,6 +257,7 @@
     'lane.range': ({ min, max }) => `${min} to ${max}`,
     'lane.ecuStep': ({ ms }) => `step ${ms}`,
     'lane.label': ({ name }) => `${name}: values over virtual time`,
+    'lane.hide': ({ name }) => `Hide ${name}`,
     'lane.note': ({ text }) => `Note: ${text}`,
     'lane.noValues': 'no values recorded',
     'lane.dropped': ({ count, source, from, to }) =>
@@ -251,10 +271,10 @@
     'legend.notKnown': 'not known',
     'legend.held': 'kept in the ECU',
     'legend.base': 'base',
-    'fit.toDeclared': 'Scale to the declared range (min to max)',
-    'fit.toValues': 'Scale to the values',
-    'fit.declared': 'declared range',
-    'fit.values': 'fit values',
+    'fit.toDeclared': ({ min, max }) => `Scale to declared range (${min} to ${max})`,
+    'fit.toValues': ({ min, max }) => `Scale to fit values (${min} to ${max})`,
+    'fit.declared': 'Y: Declared',
+    'fit.values': 'Y: Fit',
     'line.title': ({ text, where, line }) =>
       hasLine(line) ? `${text} (${where}, line ${line})` : `${text} (${where})`,
     'line.titleInFile': ({ text, where, file, line }) =>
@@ -447,6 +467,12 @@
     'page.showFailure': '失敗の所',
     'page.whole': '実行の全体',
     'page.zoomOut': '縮小',
+    'page.panLeft': '左へ移動',
+    'page.panRight': '右へ移動',
+    'page.unpinCursor': 'カーソル固定を解除',
+    'page.clearRef': 'Δt を解除',
+    'page.hint':
+      'ドラッグ: 拡大 · Shift+ドラッグ: 移動 · Ctrl+ホイール: 拡大縮小 · クリック: カーソル固定 · Shift+クリック: Δt基準 · Esc: 解除',
     'page.help':
       '手順: 始まりから終わりまでの棒、結果が決まった所の縦線、待つ手順の上限までの細い線。' +
       '帯: 条件が許す値（緑は成り立った、赤は成り立たなかった、灰はその条件では決まらなかった）。' +
@@ -482,6 +508,7 @@
       hasLine(line) ? (file ? `${file} の ${line} 行` : `${line} 行`) : file || '',
     'failure.calledFrom': '呼び出し元:',
     'passed.heading': ({ count }) => `通りました: ${count} 個の手順`,
+    'passed.noSteps': '通りました（シナリオの手順なし）',
     'passed.skipped': ({ count }) => `${count} 個を飛ばしました（手順の表を見てください）。`,
     'notDecided.heading': ({ status }) => `シナリオ: ${status}`,
     'notDecided.notRun':
@@ -551,6 +578,12 @@
       `${start} から ${end} のうち、${from} から ${to} を表示`,
     'chart.virtualTime': '仮想時刻',
     'chart.cursor': ({ at }) => `カーソル ${at}`,
+    'chart.cursorPinned': ({ at }) => `固定 ${at}`,
+    'chart.cursorDelta': ({ at, delta }) => `${at}（Δt ${delta}）`,
+    'chart.unrecorded': '未記録',
+    'chart.hiddenVars': ({ count }) => `非表示（${count}）:`,
+    'chart.restoreVar': ({ name }) => `${name} を再表示`,
+    'chart.restoreAll': 'すべて戻す',
     'chart.steps': '手順',
     'step.title': ({ index, kind, line, status }) =>
       hasLine(line)
@@ -563,6 +596,12 @@
     'step.times': ({ start, decided, end }) =>
       `始まり ${start}、決まった ${decided}、終わり ${end}`,
     'step.details': '手順の詳細',
+    'step.simultaneousBadge': ({ count }) => `×${count}`,
+    'step.simultaneousLabel': ({ at, count }) => `${at} の同時刻イベント ${count} 件`,
+    'step.simultaneousHeading': ({ at, count }) =>
+      `同一仮想時刻（${at}）のイベント ${count} 件 — 順不同（表示順は因果関係を示しません）`,
+    'step.ariaLabel': ({ index, label, status, at }) =>
+      `手順 ${index}: ${label}（${status}、${at}）`,
     'step.matchOnce': ({ from, to }) =>
       `${from} から ${to} までにすべての条件が同時に成立すれば成功`,
     'step.matchAt': ({ from }) => `${from} に成立すること`,
@@ -570,6 +609,7 @@
     'lane.range': ({ min, max }) => `${min} から ${max}`,
     'lane.ecuStep': ({ ms }) => `刻み ${ms}`,
     'lane.label': ({ name }) => `${name}: 仮想時刻での値`,
+    'lane.hide': ({ name }) => `${name} を隠す`,
     'lane.note': ({ text }) => `注記: ${text}`,
     'lane.noValues': '値の記録なし',
     'lane.dropped': ({ count, source, from, to }) =>
@@ -582,10 +622,10 @@
     'legend.notKnown': '不明',
     'legend.held': 'ECU に残った値',
     'legend.base': '基準',
-    'fit.toDeclared': '宣言の範囲（min から max）に合わせる',
-    'fit.toValues': '値に合わせる',
-    'fit.declared': '宣言の範囲',
-    'fit.values': '値に合わせた',
+    'fit.toDeclared': ({ min, max }) => `宣言の範囲（${min} 〜 ${max}）に切替`,
+    'fit.toValues': ({ min, max }) => `値に合わせた範囲（${min} 〜 ${max}）に切替`,
+    'fit.declared': 'Y: 範囲',
+    'fit.values': 'Y: 値',
     'line.title': ({ text, where, line }) =>
       hasLine(line) ? `${text}（${where}、${line} 行）` : `${text}（${where}）`,
     'line.titleInFile': ({ text, where, file, line }) =>

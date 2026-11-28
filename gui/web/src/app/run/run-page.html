@@ -103,6 +103,29 @@
     }
   </p>
 
+  @if (session(); as session) {
+    @if (session.scenario; as scenario) {
+      @if (scenario.timelineUrl) {
+        @let status = run.status();
+        <mat-card appearance="outlined" class="wide-scenario-card" data-testid="scenario-card">
+          <mat-card-header>
+            <mat-card-title><h2 id="run-scenario" tabindex="-1" i18n>シナリオ</h2></mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <app-scenario-panel
+              [scenario]="scenario"
+              [running]="runActive(session) && !session.result"
+              [paused]="status.run === 'paused'"
+              [crashed]="status.run === 'crashed'"
+              [rerunAllowed]="!running() ? rerunAllowed() : null"
+              (rerun)="rerunSession()"
+            />
+          </mat-card-content>
+        </mat-card>
+      }
+    }
+  }
+
   <!--
     1 列のときは、実行した後は「結果、状態、ログ」を「構成ファイルと照合」より先に並べる（CSS の order）。
     別のファイルを選んだら、選ぶ、照合を先に戻す。
@@ -476,23 +499,25 @@
           </mat-card>
         }
         @if (session.scenario; as scenario) {
-          <mat-card appearance="outlined" data-testid="scenario-card">
-            <mat-card-header>
-              <mat-card-title
-                ><h2 id="run-scenario" tabindex="-1" i18n>シナリオ</h2></mat-card-title
-              >
-            </mat-card-header>
-            <mat-card-content>
-              <app-scenario-panel
-                [scenario]="scenario"
-                [running]="runActive(session) && !session.result"
-                [paused]="status.run === 'paused'"
-                [crashed]="status.run === 'crashed'"
-                [rerunAllowed]="!running() ? rerunAllowed() : null"
-                (rerun)="rerunSession()"
-              />
-            </mat-card-content>
-          </mat-card>
+          @if (!scenario.timelineUrl) {
+            <mat-card appearance="outlined" data-testid="scenario-card">
+              <mat-card-header>
+                <mat-card-title
+                  ><h2 id="run-scenario" tabindex="-1" i18n>シナリオ</h2></mat-card-title
+                >
+              </mat-card-header>
+              <mat-card-content>
+                <app-scenario-panel
+                  [scenario]="scenario"
+                  [running]="runActive(session) && !session.result"
+                  [paused]="status.run === 'paused'"
+                  [crashed]="status.run === 'crashed'"
+                  [rerunAllowed]="!running() ? rerunAllowed() : null"
+                  (rerun)="rerunSession()"
+                />
+              </mat-card-content>
+            </mat-card>
+          }
         } @else if (recordable()) {
           <mat-card appearance="outlined" data-testid="recording-card">
             <mat-card-header>

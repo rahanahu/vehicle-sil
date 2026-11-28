@@ -457,10 +457,9 @@ test('real multi-case scenario: variant/case selection, typed parameter override
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     const timeline = scenarioCard.getByTestId('timeline-element');
     await expect(timeline).toBeVisible();
-    await expect(timeline.getByTestId('failure').getByRole('heading', { level: 3 })).toContainText(
-      '手順 2',
-      { timeout: RUN_TIMEOUT },
-    );
+    await expect(scenarioCard.getByTestId('timeline-failure-strip')).toContainText('#2', {
+      timeout: RUN_TIMEOUT,
+    });
     await expect(scenarioCard.getByTestId('timeline-readout')).toContainText('選んだ手順: 2');
 
     const shots = process.env['VEHICLE_SIL_GUI_SHOTS'];

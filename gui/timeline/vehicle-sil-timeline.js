@@ -120,6 +120,12 @@
     'page.showFailure': 'Show the failure',
     'page.whole': 'Whole run',
     'page.zoomOut': 'Zoom out',
+    'page.panLeft': 'Pan left',
+    'page.panRight': 'Pan right',
+    'page.unpinCursor': 'Unpin cursor',
+    'page.clearRef': 'Clear Δt',
+    'page.hint':
+      'Drag: zoom · Shift+drag: pan · Ctrl+wheel: zoom · Click: pin cursor · Shift+click: Δt reference · Esc: unpin',
     'page.help':
       "Steps: a bar from start to end, a tick where the result was decided, a thin line on to a wait's limit. " +
       'Shaded: the values a condition allows (green: it held; red: it did not; grey: not decided by it). ' +
@@ -156,6 +162,7 @@
       hasLine(line) ? (file ? `line ${line} of ${file}` : `line ${line}`) : file || '',
     'failure.calledFrom': 'Called from:',
     'passed.heading': ({ count }) => `Passed: ${count} step${count === 1 ? '' : 's'}`,
+    'passed.noSteps': 'Passed (no scenario steps)',
     'passed.skipped': ({ count }) => `${count} skipped (see the table of steps).`,
     'notDecided.heading': ({ status }) => `Scenario ${status}`,
     'notDecided.notRun':
@@ -225,6 +232,12 @@
     'chart.showing': ({ from, to, start, end }) => `Showing ${from} to ${to} of ${start} to ${end}`,
     'chart.virtualTime': 'Virtual time',
     'chart.cursor': ({ at }) => `Cursor ${at}`,
+    'chart.cursorPinned': ({ at }) => `Pinned ${at}`,
+    'chart.cursorDelta': ({ at, delta }) => `${at} (Δt ${delta})`,
+    'chart.unrecorded': 'unrecorded',
+    'chart.hiddenVars': ({ count }) => `Hidden (${count}):`,
+    'chart.restoreVar': ({ name }) => `Show ${name} again`,
+    'chart.restoreAll': 'Restore all',
     'chart.steps': 'Steps',
     'step.title': ({ index, kind, line, status }) =>
       hasLine(line)
@@ -236,6 +249,12 @@
         : `Step ${index} (${kind}, ${file}): ${status}`,
     'step.times': ({ start, decided, end }) => `start ${start}, decided ${decided}, end ${end}`,
     'step.details': 'Step details',
+    'step.simultaneousBadge': ({ count }) => `×${count}`,
+    'step.simultaneousLabel': ({ at, count }) => `${count} simultaneous events at ${at}`,
+    'step.simultaneousHeading': ({ at, count }) =>
+      `${count} events at the same virtual time (${at}) — unordered; display order does not imply causal order`,
+    'step.ariaLabel': ({ index, label, status, at }) =>
+      `Step ${index}: ${label} (${status}, ${at})`,
     'step.matchOnce': ({ from, to }) =>
       `All conditions must match together at least once between ${from} and ${to}`,
     'step.matchAt': ({ from }) => `Must match at ${from}`,
@@ -243,6 +262,7 @@
     'lane.range': ({ min, max }) => `${min} to ${max}`,
     'lane.ecuStep': ({ ms }) => `step ${ms}`,
     'lane.label': ({ name }) => `${name}: values over virtual time`,
+    'lane.hide': ({ name }) => `Hide ${name}`,
     'lane.note': ({ text }) => `Note: ${text}`,
     'lane.noValues': 'no values recorded',
     'lane.dropped': ({ count, source, from, to }) =>
@@ -256,10 +276,10 @@
     'legend.notKnown': 'not known',
     'legend.held': 'kept in the ECU',
     'legend.base': 'base',
-    'fit.toDeclared': 'Scale to the declared range (min to max)',
-    'fit.toValues': 'Scale to the values',
-    'fit.declared': 'declared range',
-    'fit.values': 'fit values',
+    'fit.toDeclared': ({ min, max }) => `Scale to declared range (${min} to ${max})`,
+    'fit.toValues': ({ min, max }) => `Scale to fit values (${min} to ${max})`,
+    'fit.declared': 'Y: Declared',
+    'fit.values': 'Y: Fit',
     'line.title': ({ text, where, line }) =>
       hasLine(line) ? `${text} (${where}, line ${line})` : `${text} (${where})`,
     'line.titleInFile': ({ text, where, file, line }) =>
@@ -452,6 +472,12 @@
     'page.showFailure': '失敗の所',
     'page.whole': '実行の全体',
     'page.zoomOut': '縮小',
+    'page.panLeft': '左へ移動',
+    'page.panRight': '右へ移動',
+    'page.unpinCursor': 'カーソル固定を解除',
+    'page.clearRef': 'Δt を解除',
+    'page.hint':
+      'ドラッグ: 拡大 · Shift+ドラッグ: 移動 · Ctrl+ホイール: 拡大縮小 · クリック: カーソル固定 · Shift+クリック: Δt基準 · Esc: 解除',
     'page.help':
       '手順: 始まりから終わりまでの棒、結果が決まった所の縦線、待つ手順の上限までの細い線。' +
       '帯: 条件が許す値（緑は成り立った、赤は成り立たなかった、灰はその条件では決まらなかった）。' +
@@ -487,6 +513,7 @@
       hasLine(line) ? (file ? `${file} の ${line} 行` : `${line} 行`) : file || '',
     'failure.calledFrom': '呼び出し元:',
     'passed.heading': ({ count }) => `通りました: ${count} 個の手順`,
+    'passed.noSteps': '通りました（シナリオの手順なし）',
     'passed.skipped': ({ count }) => `${count} 個を飛ばしました（手順の表を見てください）。`,
     'notDecided.heading': ({ status }) => `シナリオ: ${status}`,
     'notDecided.notRun':
@@ -556,6 +583,12 @@
       `${start} から ${end} のうち、${from} から ${to} を表示`,
     'chart.virtualTime': '仮想時刻',
     'chart.cursor': ({ at }) => `カーソル ${at}`,
+    'chart.cursorPinned': ({ at }) => `固定 ${at}`,
+    'chart.cursorDelta': ({ at, delta }) => `${at}（Δt ${delta}）`,
+    'chart.unrecorded': '未記録',
+    'chart.hiddenVars': ({ count }) => `非表示（${count}）:`,
+    'chart.restoreVar': ({ name }) => `${name} を再表示`,
+    'chart.restoreAll': 'すべて戻す',
     'chart.steps': '手順',
     'step.title': ({ index, kind, line, status }) =>
       hasLine(line)
@@ -568,6 +601,12 @@
     'step.times': ({ start, decided, end }) =>
       `始まり ${start}、決まった ${decided}、終わり ${end}`,
     'step.details': '手順の詳細',
+    'step.simultaneousBadge': ({ count }) => `×${count}`,
+    'step.simultaneousLabel': ({ at, count }) => `${at} の同時刻イベント ${count} 件`,
+    'step.simultaneousHeading': ({ at, count }) =>
+      `同一仮想時刻（${at}）のイベント ${count} 件 — 順不同（表示順は因果関係を示しません）`,
+    'step.ariaLabel': ({ index, label, status, at }) =>
+      `手順 ${index}: ${label}（${status}、${at}）`,
     'step.matchOnce': ({ from, to }) =>
       `${from} から ${to} までにすべての条件が同時に成立すれば成功`,
     'step.matchAt': ({ from }) => `${from} に成立すること`,
@@ -575,6 +614,7 @@
     'lane.range': ({ min, max }) => `${min} から ${max}`,
     'lane.ecuStep': ({ ms }) => `刻み ${ms}`,
     'lane.label': ({ name }) => `${name}: 仮想時刻での値`,
+    'lane.hide': ({ name }) => `${name} を隠す`,
     'lane.note': ({ text }) => `注記: ${text}`,
     'lane.noValues': '値の記録なし',
     'lane.dropped': ({ count, source, from, to }) =>
@@ -587,10 +627,10 @@
     'legend.notKnown': '不明',
     'legend.held': 'ECU に残った値',
     'legend.base': '基準',
-    'fit.toDeclared': '宣言の範囲（min から max）に合わせる',
-    'fit.toValues': '値に合わせる',
-    'fit.declared': '宣言の範囲',
-    'fit.values': '値に合わせた',
+    'fit.toDeclared': ({ min, max }) => `宣言の範囲（${min} 〜 ${max}）に切替`,
+    'fit.toValues': ({ min, max }) => `値に合わせた範囲（${min} 〜 ${max}）に切替`,
+    'fit.declared': 'Y: 範囲',
+    'fit.values': 'Y: 値',
     'line.title': ({ text, where, line }) =>
       hasLine(line) ? `${text}（${where}、${line} 行）` : `${text}（${where}）`,
     'line.titleInFile': ({ text, where, file, line }) =>
@@ -769,11 +809,16 @@
 :host([hide~='legend']) .legend .key {
   display: none !important;
 }
-:host([compact]) :is(.lane, .cursor-line) {
-  --lane-head-width: 120px;
+:host([compact]) :is(.lane, .cursor-line, .hover-line, .ref-line) {
+  --lane-head-width: 180px;
+}
+@container (max-width: 719px) {
+  :host([compact]) :is(.lane, .cursor-line, .hover-line, .ref-line) {
+    --lane-head-width: 120px;
+  }
 }
 @container (max-width: 479px) {
-  :host([compact]) .cursor-line {
+  :host([compact]) :is(.cursor-line, .hover-line, .ref-line) {
     --lane-head-width: 0px;
   }
   :host([compact]) .lane {
@@ -809,7 +854,7 @@ h4 {
   color: var(--_muted);
 }
 .small {
-  font-size: 0.85rem;
+  font-size: max(12px, 0.85rem);
 }
 #head {
   display: flex;
@@ -995,19 +1040,51 @@ summary {
   background: var(--_panel);
 }
 .lane,
-.cursor-line {
-  --lane-head-width: 200px;
+.cursor-line,
+.hover-line,
+.ref-line {
+  --lane-head-width: 220px;
 }
 .lane {
   display: grid;
   grid-template-columns: var(--lane-head-width) 1fr;
   border-bottom: 1px solid var(--_grid);
 }
+.lane.steps {
+  border-top: 2px solid var(--_border);
+  border-bottom: none;
+}
 .lane-head {
   padding: 4px 8px;
   border-right: 1px solid var(--_grid);
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.lane-head-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+}
+.lane-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+button.lane-hide {
+  flex: none;
+  padding: 0 5px;
+  min-width: 22px;
+  line-height: 1.3;
+  font-size: 13px;
+  color: var(--_muted);
+  background: transparent;
+  border-color: transparent;
+}
+button.lane-hide:hover,
+button.lane-hide:focus-visible {
+  color: var(--_fg);
+  background: var(--_bg);
+  border-color: var(--_border);
 }
 .lane.failing .lane-head {
   box-shadow: inset 4px 0 0 var(--_bad);
@@ -1019,22 +1096,25 @@ summary {
   touch-action: none;
   cursor: crosshair;
 }
+.lane-plot.panning {
+  cursor: grabbing;
+}
 .lane.axis {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   background: var(--_panel);
 }
 .group {
   padding: 4px 8px;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: max(12px, 0.85rem);
   color: var(--_muted);
   background: var(--_bg);
   border-bottom: 1px solid var(--_grid);
 }
 @container (max-width: 719px) {
-  :host(:not([compact])) .cursor-line {
+  :host(:not([compact])) :is(.cursor-line, .hover-line, .ref-line) {
     --lane-head-width: 0px;
   }
   :host(:not([compact])) .lane {
@@ -1044,16 +1124,67 @@ summary {
     border-right: none;
   }
 }
-#step-details {
-  height: 6.25em;
-  margin-bottom: 8px;
+#hidden-vars {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: var(--_panel);
+}
+button.restore-chip {
   padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+#step-details {
+  min-height: 4.5em;
+  max-height: 14em;
+  margin-top: 8px;
+  padding: 6px 10px;
   border: 1px solid var(--_border);
   border-radius: 6px;
   background: var(--_panel);
   overflow: auto;
   overflow-wrap: anywhere;
   scrollbar-gutter: stable;
+}
+.sim-banner {
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  border-left: 3px solid var(--_warn);
+  background: var(--_warn-bg);
+  color: var(--_fg);
+  font-weight: 600;
+  font-size: max(12px, 0.85rem);
+}
+.sim-list {
+  display: grid;
+  gap: 6px;
+}
+.sim-item {
+  padding: 4px 8px;
+  border: 1px solid var(--_grid);
+  border-radius: 4px;
+}
+.sim-item.selected {
+  border-color: var(--_sent);
+  background: var(--_selection);
+}
+.sim-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+#chart-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--_muted);
 }
 .detail-heading > span {
   margin-inline-start: 10px;
@@ -1185,6 +1316,14 @@ svg text {
 .unrecorded {
   fill: var(--_unrecorded);
 }
+.unrecorded-label {
+  fill: var(--_muted);
+  font-size: 10px;
+  paint-order: stroke;
+  stroke: var(--_panel);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
 .dropped {
   fill: var(--_warn-fill);
   stroke: var(--_warn);
@@ -1201,7 +1340,49 @@ svg text {
   background: var(--_cursor);
   pointer-events: none;
 }
+.cursor-line.pinned {
+  width: 1.5px;
+  background: var(--_sent);
+}
+.cursor-line.pinned::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 9px;
+  height: 7px;
+  background: var(--_sent);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
 #chart[data-cursor-side] > .cursor-line {
+  display: block;
+}
+.hover-line {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--lane-head-width) + var(--hover-x));
+  z-index: 2;
+  width: 1px;
+  border-left: 1px dashed var(--_muted);
+  pointer-events: none;
+}
+#chart[data-pinned-hover] > .hover-line {
+  display: block;
+}
+.ref-line {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--lane-head-width) + var(--ref-x));
+  z-index: 2;
+  width: 1px;
+  border-left: 1.5px dashed var(--_base);
+  pointer-events: none;
+}
+#chart[data-ref] > .ref-line {
   display: block;
 }
 .selection {
@@ -1212,6 +1393,33 @@ svg text {
   stroke-width: 1.5;
   stroke-dasharray: 5 3;
   pointer-events: none;
+}
+.sim-tie {
+  stroke: var(--_warn);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+  pointer-events: none;
+}
+.sim-cluster {
+  cursor: pointer;
+}
+.sim-cluster rect {
+  fill: var(--_warn-bg);
+  stroke: var(--_warn);
+  stroke-width: 1;
+}
+.sim-cluster text {
+  fill: var(--_warn);
+  font-size: 10px;
+  font-weight: 700;
+}
+.sim-cluster:focus-visible,
+.step:focus-visible {
+  outline: 2px solid var(--_sent);
+  outline-offset: 1px;
+}
+.step {
+  cursor: pointer;
 }
 .step .bar {
   fill: var(--_neutral-fill);
@@ -1304,46 +1512,60 @@ svg text {
   stroke: var(--_warn);
   stroke-width: 1.5;
 }
-.state {
+rect.state {
   stroke: var(--_panel);
   stroke-width: 0.5;
 }
-.state.v-true {
+rect.state.v-true {
   fill: var(--_true);
   opacity: 0.75;
 }
-.state.v-false {
+rect.state.v-false {
   fill: var(--_grid);
 }
-.state.v-null,
-.state.v-mixed {
+rect.state.v-null,
+rect.state.v-mixed {
   fill: var(--_neutral-fill);
 }
-.state.v-e0 {
+rect.state.v-e0 {
   fill: var(--_e0);
 }
-.state.v-e1 {
+rect.state.v-e1 {
   fill: var(--_e1);
 }
-.state.v-e2 {
+rect.state.v-e2 {
   fill: var(--_e2);
 }
-.state.not-applied {
+rect.state.not-applied {
   fill: var(--_bad-fill);
   stroke: var(--_bad);
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
 }
-.state.not-known {
+rect.state.not-known {
   fill: var(--_warn-fill);
   stroke: var(--_warn);
   stroke-width: 1.5;
   stroke-dasharray: 1.5 2.5;
 }
-.state.held {
+rect.state.held {
   fill: var(--_neutral);
   opacity: 0.6;
   stroke: none;
+}
+.state-edge-tick {
+  stroke: var(--_true);
+  stroke-width: 2.5;
+}
+.state-edge-label {
+  fill: var(--_fg);
+  font-size: 10px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: var(--_panel);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 .state-label {
   pointer-events: none;
@@ -2484,7 +2706,7 @@ tr.selected td {
     return { t0, t1, width, x: (t) => (t - t0) * k, t: (x) => t0 + x / k };
   }
 
-  /** The view when the page opens: the failure (a little before the failed step to the end of the record), or all. */
+  /** The view when the page opens: pre-failure lead-in (~80% pre-failure / ~20% tail) respecting recordedTo, or all. */
   function initialView(model) {
     const [d0, d1] = model.domain;
     const f = model.failure;
@@ -2492,9 +2714,343 @@ tr.selected td {
     const start = isNum(f.step.start_ms) ? Math.min(f.step.start_ms, f.at) : f.at;
     const right = Math.max(f.at, model.recordedTo ?? f.at);
     const span = Math.max(right - start, (d1 - d0) * 0.2, (model.timeStep ?? 1) * 4);
-    const t0 = Math.max(d0, start - span * 0.3);
+    const t0 = Math.max(d0, Math.min(start - span * 0.3, f.at - span * 0.8));
     const t1 = Math.min(d1, right + span * 0.15);
     return [t0, Math.max(t1, t0 + 1e-9)];
+  }
+
+  /** Shifts a view horizontally by deltaMs, clamped to domain while preserving the current zoom span. */
+  function panView(domain, currentView, deltaMs) {
+    const [d0, d1] = domain;
+    const [t0, t1] = currentView;
+    const span = Math.min(d1 - d0, t1 - t0);
+    let nt0 = t0 + deltaMs;
+    let nt1 = nt0 + span;
+    if (nt0 < d0) {
+      nt0 = d0;
+      nt1 = d0 + span;
+    } else if (nt1 > d1) {
+      nt1 = d1;
+      nt0 = d1 - span;
+    }
+    return [nt0, Math.max(nt1, nt0 + 1e-9)];
+  }
+
+  /** View for a step; caps failed steps at recordedTo so unrecorded tails do not dominate. */
+  function stepViewFor(model, st) {
+    const from = st.start_ms;
+    const failAt =
+      st.status === 'failed'
+        ? isObject(st.failed) && isNum(st.failed.at_ms)
+          ? st.failed.at_ms
+          : isNum(st.at_ms)
+            ? st.at_ms
+            : null
+        : null;
+    if (failAt !== null) {
+      const right = Math.max(failAt, model.recordedTo ?? failAt);
+      const span = Math.max(
+        right - Math.min(from, failAt),
+        (model.domain[1] - model.domain[0]) * 0.2,
+        (model.timeStep ?? 1) * 4,
+      );
+      const t0 = Math.max(model.domain[0], Math.min(from - span * 0.3, failAt - span * 0.8));
+      const t1 = Math.min(model.domain[1], right + span * 0.15);
+      return [t0, Math.max(t1, t0 + 1e-9)];
+    }
+    const ends = [st.end_ms, st.at_ms, isObject(st.watch) ? st.watch.to_ms : null].filter(isNum);
+    const to = Math.max(from, ...ends);
+    const pad = Math.max((to - from) * 0.25, (model.timeStep ?? 1) * 3);
+    return [Math.max(model.domain[0], from - pad), Math.min(model.domain[1], to + pad)];
+  }
+
+  /** View for jumping to the failure: preserves zoom span (placing failure at ~80%) when zoomed in. */
+  function failureJumpView(model, currentView, preserveZoom = true) {
+    const f = model.failure;
+    if (!f || !isNum(f.at)) return currentView ?? model.domain;
+    const [d0, d1] = model.domain;
+    const domainSpan = d1 - d0;
+    const curSpan = currentView ? currentView[1] - currentView[0] : domainSpan;
+    if (preserveZoom && currentView && curSpan > 0 && curSpan < domainSpan * 0.98) {
+      let t0 = f.at - curSpan * 0.8;
+      let t1 = t0 + curSpan;
+      if (t0 < d0) {
+        t0 = d0;
+        t1 = Math.min(d1, d0 + curSpan);
+      } else if (t1 > d1) {
+        t1 = d1;
+        t0 = Math.max(d0, d1 - curSpan);
+      }
+      return [t0, Math.max(t1, t0 + 1e-9)];
+    }
+    return initialView(model);
+  }
+
+  /** View for focusing a step: preserves zoom span when zoomed in if preserveZoom is true. */
+  function stepFocusView(model, st, currentView, preserveZoom = false) {
+    if (!st || !isNum(st.start_ms)) return currentView ?? model.domain;
+    if (st.status === 'failed' && model.failure && model.failure.step.index === st.index) {
+      return failureJumpView(model, currentView, preserveZoom);
+    }
+    const [d0, d1] = model.domain;
+    const domainSpan = d1 - d0;
+    const curSpan = currentView ? currentView[1] - currentView[0] : domainSpan;
+    if (preserveZoom && currentView && curSpan > 0 && curSpan < domainSpan * 0.98) {
+      const target = st.start_ms;
+      const margin = curSpan * 0.08;
+      if (target >= currentView[0] + margin && target <= currentView[1] - margin) {
+        return [currentView[0], currentView[1]];
+      }
+      let t0 = target - curSpan * 0.5;
+      let t1 = t0 + curSpan;
+      if (t0 < d0) {
+        t0 = d0;
+        t1 = Math.min(d1, d0 + curSpan);
+      } else if (t1 > d1) {
+        t1 = d1;
+        t0 = Math.max(d0, d1 - curSpan);
+      }
+      return [t0, Math.max(t1, t0 + 1e-9)];
+    }
+    return stepViewFor(model, st);
+  }
+
+  /** Conservative rendered width in px for SVG labels (ASCII vs wide/CJK characters). */
+  function estimateTextWidth(str) {
+    let w = 0;
+    for (const ch of String(str || '')) w += ch.codePointAt(0) > 0x7f ? 11.5 : 6.8;
+    return w;
+  }
+
+  /** Truncates a label with an ellipsis so its estimated pixel width does not exceed maxPx. */
+  function truncateLabel(str, maxPx) {
+    const s = String(str || '');
+    if (estimateTextWidth(s) <= maxPx) return s;
+    const ellipsisW = 8;
+    let out = '';
+    let w = 0;
+    for (const ch of s) {
+      const cw = ch.codePointAt(0) > 0x7f ? 11.5 : 6.8;
+      if (w + cw + ellipsisW > maxPx) break;
+      out += ch;
+      w += cw;
+    }
+    return out ? `${out}…` : '…';
+  }
+
+  /** Groups steps that share the exact same numeric start_ms (count >= 2). */
+  function sameStartGroups(steps) {
+    const byStart = new Map();
+    for (const st of steps || []) {
+      if (!isNum(st.start_ms)) continue;
+      let list = byStart.get(st.start_ms);
+      if (!list) {
+        list = [];
+        byStart.set(st.start_ms, list);
+      }
+      list.push(st);
+    }
+    const groups = new Map();
+    for (const [at, list] of byStart) {
+      if (list.length >= 2) groups.set(at, list);
+    }
+    return groups;
+  }
+
+  /**
+   * Computes pixel-width-aware layout and row packing for steps visible in `scale`.
+   * Accounts for actual rendered label widths and concise `#N` labels on narrow bars so labels never collide.
+   */
+  function layoutStepItems(steps, scale, domainEnd) {
+    const items = [];
+    const maxPointLabelPx = Math.min(240, Math.max(88, scale.width * 0.42));
+    for (const st of steps || []) {
+      if (!isNum(st.start_ms)) continue;
+      const start = st.start_ms;
+      let end = [st.end_ms, st.at_ms].filter(isNum).reduce((a, b) => Math.max(a, b), start);
+      const open = st.status === 'unfinished';
+      if (open) end = domainEnd;
+      const limit =
+        isObject(st.watch) &&
+        st.watch.mode === 'once' &&
+        isNum(st.watch.to_ms) &&
+        st.watch.to_ms > end
+          ? st.watch.to_ms
+          : null;
+      if ((limit ?? end) < scale.t0 || start > scale.t1) continue;
+      const stName = nonEmptyString(st.name);
+      const fullLabel = stName ? `#${st.index} ${stName}` : `#${st.index} ${st.kind}`;
+      const rawX0 = scale.x(start);
+      const rawX1 = scale.x(end);
+      const xs = Math.max(0, rawX0);
+      const xe = Math.min(scale.width, scale.x(limit ?? end));
+      const barW = rawX1 - rawX0;
+      const point = barW < 2;
+      let displayLabel = fullLabel;
+      let left = false;
+      let inside = false;
+      let narrow = false;
+      let x0;
+      let x1;
+
+      if (point || st.status === 'skipped') {
+        displayLabel = truncateLabel(fullLabel, maxPointLabelPx);
+        const labelPx = estimateTextWidth(displayLabel) + 8;
+        left = xs + 8 + labelPx > scale.width && xs - 8 - labelPx >= 0;
+        x0 = left ? Math.max(0, xs - 8 - labelPx) : Math.max(0, xs - 7);
+        x1 = left ? Math.min(scale.width, xs + 7) : Math.min(scale.width, xs + 8 + labelPx);
+      } else {
+        const visBarW = Math.min(scale.width, rawX1) - xs;
+        const fullPx = estimateTextWidth(fullLabel) + 10;
+        if (visBarW >= fullPx) {
+          inside = true;
+          x0 = xs;
+          x1 = xe;
+        } else if (visBarW < 42) {
+          narrow = true;
+          const idxLabel = `#${st.index}`;
+          const idxPx = estimateTextWidth(idxLabel) + 6;
+          displayLabel = idxLabel;
+          if (visBarW >= idxPx) {
+            inside = true;
+            x0 = xs;
+            x1 = Math.max(xe, xs + visBarW);
+          } else {
+            left = xe + 4 + idxPx > scale.width && xs - 4 - idxPx >= 0;
+            x0 = left ? Math.max(0, xs - 4 - idxPx) : xs;
+            x1 = left ? Math.max(xe, xs + 2) : Math.min(scale.width, xe + 4 + idxPx);
+          }
+        } else if (visBarW >= 68) {
+          inside = true;
+          displayLabel = truncateLabel(fullLabel, visBarW - 8);
+          x0 = xs;
+          x1 = xe;
+        } else {
+          displayLabel = truncateLabel(fullLabel, Math.min(180, scale.width * 0.35));
+          const labelPx = estimateTextWidth(displayLabel) + 8;
+          left = xe + 5 + labelPx > scale.width && xs - 5 - labelPx >= 0;
+          x0 = left ? Math.max(0, xs - 5 - labelPx) : xs;
+          x1 = left ? xe : Math.min(scale.width, xe + 5 + labelPx);
+        }
+      }
+      items.push({
+        st,
+        start,
+        end,
+        limit,
+        open,
+        point,
+        label: fullLabel,
+        displayLabel,
+        inside,
+        narrow,
+        left,
+        x0,
+        x1,
+      });
+    }
+    const packed = packRows(items, 8);
+    return { items, rows: packed.rows, count: packed.count };
+  }
+
+  /** Whether a variable had any recorded value change in [at - windowMs, at]. */
+  function variableChangedNear(v, at, windowMs) {
+    if (!isNum(at)) return false;
+    const from = at - windowMs;
+    for (const series of [v.written, v.sampled]) {
+      if (!series || !series.t.length) continue;
+      for (let i = 0; i < series.t.length; i++) {
+        const t = series.t[i];
+        if (t < from || t > at) continue;
+        if (i === 0 ? t > 0 : series.v[i] !== series.v[i - 1]) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Builds the additive `load` event detail from a parsed model. */
+  function modelMetadata(model, file) {
+    const f = model.failure;
+    const related = new Set();
+    if (f) {
+      for (const c of f.conditions) {
+        if (typeof c.variable === 'string') related.add(c.variable);
+        if (Array.isArray(c.compared)) {
+          for (const rhs of c.compared) {
+            if (typeof rhs.variable === 'string') related.add(rhs.variable);
+          }
+        }
+      }
+      for (const w of f.writes) {
+        if (typeof w.variable === 'string') related.add(w.variable);
+      }
+      if (isObject(f.step?.watch) && Array.isArray(f.step.watch.conditions)) {
+        for (const wc of f.step.watch.conditions) {
+          if (!isObject(wc)) continue;
+          if (typeof wc.variable === 'string') related.add(wc.variable);
+          if (Array.isArray(wc.compare)) {
+            for (const cmp of wc.compare) {
+              const target = compareTarget(cmp);
+              if (target) related.add(target);
+            }
+          }
+        }
+      }
+      for (const l of model.lines) {
+        if (l.step === f.step.index && typeof l.variable === 'string') related.add(l.variable);
+      }
+    }
+    const nearWindow = Math.max(150, (model.timeStep ?? 10) * 15);
+    return {
+      file: file ?? null,
+      scenario: model.name ?? null,
+      status: model.status,
+      start: model.domain[0],
+      end: model.domain[1],
+      recordedTo: model.recordedTo,
+      stepCount: model.steps.length,
+      failure: f
+        ? {
+            step: f.step.index,
+            at: f.at,
+            name: f.name,
+            text: typeof f.step.text === 'string' ? f.step.text : '',
+            message: f.message,
+            conditions: f.conditions.map((c) => ({
+              variable: c.variable,
+              compare: c.compare,
+              valueText: c.valueText,
+              sampleMs: c.sampleMs,
+              compared: Array.isArray(c.compared)
+                ? c.compared.map((rhs) => ({
+                    variable: rhs.variable,
+                    valueText: rhs.valueText,
+                    sampleMs: rhs.sampleMs,
+                  }))
+                : [],
+            })),
+            writes: f.writes.map((w) => ({
+              variable: w.variable,
+              at: w.at,
+              valueText: w.valueText,
+              applied: w.applied,
+              cause: w.cause,
+            })),
+          }
+        : null,
+      variables: model.vars.map((v) => ({
+        name: v.name,
+        participant: v.participant,
+        type: typeof v.info.type === 'string' ? v.info.type : 'unknown',
+        causality: typeof v.info.causality === 'string' ? v.info.causality : null,
+        unit: typeof v.info.unit === 'string' ? v.info.unit : '',
+        written: Boolean(v.info.written || v.written),
+        watched: Boolean(v.info.watched || v.sampled),
+        failing: v.failing,
+        relatedToFailure: v.failing || related.has(v.name),
+        changedNearFailure: f && isNum(f.at) ? variableChangedNear(v, f.at, nearWindow) : false,
+      })),
+    };
   }
 
   /** Round tick values for an axis, about `count` of them. */
@@ -2844,6 +3400,16 @@ tr.selected td {
     buildModel,
     makeScale,
     initialView,
+    panView,
+    stepViewFor,
+    failureJumpView,
+    stepFocusView,
+    estimateTextWidth,
+    truncateLabel,
+    sameStartGroups,
+    layoutStepItems,
+    variableChangedNear,
+    modelMetadata,
     niceTicks,
     packRows,
     pointState,
@@ -2925,7 +3491,11 @@ tr.selected td {
       view: null,
       fit: new Set(),
       hidden: new Set(),
+      hiddenVars: new Set(),
       cursor: null,
+      pinned: false,
+      pinnedCursor: null,
+      refCursor: null,
       /** The index of the chosen step, or null. */
       step: null,
       readouts: [],
@@ -3019,6 +3589,10 @@ tr.selected td {
     } else {
       state.fit.clear();
       state.hidden.clear();
+      state.hiddenVars.clear();
+      state.pinned = false;
+      state.pinnedCursor = null;
+      state.refCursor = null;
       const o = current.options;
       state.view = initialView(model);
       state.cursor = isNum(o.cursor) ? o.cursor : null;
@@ -3031,17 +3605,7 @@ tr.selected td {
     $('view').hidden = false;
     renderAll();
     if (!before) {
-      emit(
-        'load',
-        {
-          file: state.file,
-          scenario: model.name ?? null,
-          status: model.status,
-          start: model.domain[0],
-          end: model.domain[1],
-        },
-        true,
-      );
+      emit('load', modelMetadata(model, state.file), true);
     }
   }
 
@@ -3129,7 +3693,7 @@ tr.selected td {
         h(
           'div',
           { class: 'banner ok', 'data-testid': 'passed' },
-          h('h3', { text: t('passed.heading', { count: n }) }),
+          h('h3', { text: n === 0 ? t('passed.noSteps') : t('passed.heading', { count: n }) }),
           skipped ? h('p', { text: t('passed.skipped', { count: skipped }) }) : null,
         ),
       );
@@ -3512,11 +4076,7 @@ tr.selected td {
 
   /** The view around a step (from its start to its end and the end of what it watches). */
   function stepView(st) {
-    const from = st.start_ms;
-    const ends = [st.end_ms, st.at_ms, isObject(st.watch) ? st.watch.to_ms : null].filter(isNum);
-    const to = Math.max(from, ...ends);
-    const pad = Math.max((to - from) * 0.25, (state.model.timeStep ?? 1) * 3);
-    return [Math.max(state.model.domain[0], from - pad), Math.min(state.model.domain[1], to + pad)];
+    return stepViewFor(state.model, st);
   }
 
   /** The step of an index, or undefined. */
@@ -3524,16 +4084,76 @@ tr.selected td {
     return state.model ? state.model.steps.find((st) => st.index === index) : undefined;
   }
 
-  /** Chooses a step (null: none): marks it on the chart and in the table, and shows it when it has a time. */
-  function showStep(st, scroll) {
-    const changed = (st ? st.index : null) !== state.step;
-    state.step = st ? st.index : null;
+  /** Syncs selected row highlighting in the steps table. */
+  function syncStepSelection() {
     for (const row of root.querySelectorAll('tr[data-step]'))
       row.classList.toggle('selected', Number(row.dataset.step) === state.step);
-    if (st && isNum(st.start_ms)) setView(stepView(st));
-    else renderChart();
+  }
+
+  /** Chooses a step (null: none): marks it on the chart and in the table, and shows it when it has a time. */
+  function showStep(st, scroll, options) {
+    const changed = (st ? st.index : null) !== state.step;
+    state.step = st ? st.index : null;
+    syncStepSelection();
+    if (st && isNum(st.start_ms)) {
+      const next = options?.preserveZoom
+        ? stepFocusView(state.model, st, state.view, true)
+        : stepView(st);
+      setView(next);
+    } else {
+      renderChart();
+    }
     if (changed) emit('stepselect', { step: state.step });
     if (scroll) $('chart').scrollIntoView({ block: 'nearest' });
+  }
+
+  /** Jumps to the failure timestamp, pinning cursor and selecting the failed step. */
+  function jumpToFailureImpl(options) {
+    const m = state.model;
+    const f = m?.failure;
+    if (!f) return false;
+    const preserve = options?.preserveZoom !== false;
+    const next = failureJumpView(m, state.view, preserve);
+    const stepChanged = f.step.index !== state.step;
+    const targetAt = isNum(f.at) ? f.at : isNum(f.step.start_ms) ? f.step.start_ms : null;
+    const cursorChanged = targetAt !== null && targetAt !== state.cursor;
+    state.step = f.step.index;
+    if (targetAt !== null) {
+      state.cursor = targetAt;
+      state.pinned = true;
+      state.pinnedCursor = targetAt;
+    }
+    syncStepSelection();
+    setView(next);
+    if (cursorChanged) emit('cursorchange', { cursor: state.cursor });
+    if (stepChanged) emit('stepselect', { step: state.step });
+    return true;
+  }
+
+  /** Focuses a step by index, pinning cursor to its virtual timestamp and optionally preserving zoom. */
+  function focusStepImpl(index, options) {
+    const m = state.model;
+    const st = stepOf(index);
+    if (!m || !st) return false;
+    const preserve = Boolean(options?.preserveZoom);
+    if (st.status === 'failed' && m.failure && m.failure.step.index === st.index) {
+      return jumpToFailureImpl({ preserveZoom: preserve });
+    }
+    const targetAt = isNum(st.start_ms) ? st.start_ms : isNum(st.at_ms) ? st.at_ms : null;
+    const stepChanged = st.index !== state.step;
+    const cursorChanged = targetAt !== null && targetAt !== state.cursor;
+    state.step = st.index;
+    if (targetAt !== null) {
+      state.cursor = targetAt;
+      state.pinned = true;
+      state.pinnedCursor = targetAt;
+    }
+    syncStepSelection();
+    if (isNum(st.start_ms)) setView(stepFocusView(m, st, state.view, preserve));
+    else renderChart();
+    if (cursorChanged) emit('cursorchange', { cursor: state.cursor });
+    if (stepChanged) emit('stepselect', { step: state.step });
+    return true;
   }
 
   // --- the chart
@@ -3566,11 +4186,13 @@ tr.selected td {
     const chart = $('chart');
     const compact = current.options.compact;
     const head = compact
-      ? chart.clientWidth >= 480
-        ? 120
-        : 0
+      ? chart.clientWidth >= 720
+        ? 180
+        : chart.clientWidth >= 480
+          ? 120
+          : 0
       : chart.clientWidth >= 720
-        ? 200
+        ? 220
         : 0;
     return Math.max(compact ? 100 : 160, chart.clientWidth - head - 2);
   }
@@ -3581,11 +4203,15 @@ tr.selected td {
    * groups (only without the property). missing: the entries of the property that match no variable of the file.
    */
   function lanesToDraw(m) {
-    const visible = (v) => !state.hidden.has(v.participant);
     const wanted = current.options.variables;
-    if (!wanted) {
+    const visible = (v) =>
+      !state.hidden.has(v.participant) && (wanted !== null || !state.hiddenVars.has(v.name));
+    if (wanted === null) {
       const inputs = m.inputs.filter(visible);
       return { inputs, others: m.others.filter(visible), groups: true, missing: [] };
+    }
+    if (wanted.length === 0) {
+      return { inputs: [], others: [], groups: false, missing: [] };
     }
     const every = [...m.inputs, ...m.others];
     const all = every.filter(visible);
@@ -3602,6 +4228,43 @@ tr.selected td {
     return { inputs: chosen, others: [], groups: false, missing };
   }
 
+  /** Inline restore chip bar for locally-hidden lanes (when `variables` is not externally controlled). */
+  function renderHiddenVars() {
+    const box = $('hidden-vars');
+    if (!box) return;
+    if (current.options.variables !== null || state.hiddenVars.size === 0) {
+      box.hidden = true;
+      box.replaceChildren();
+      return;
+    }
+    const names = [...state.hiddenVars];
+    box.hidden = false;
+    box.replaceChildren(
+      h('span', { class: 'muted small', text: t('chart.hiddenVars', { count: names.length }) }),
+      ...names.map((name) =>
+        h('button', {
+          type: 'button',
+          class: 'restore-chip',
+          title: t('chart.restoreVar', { name }),
+          onclick: () => {
+            state.hiddenVars.delete(name);
+            renderChart();
+          },
+          text: `${name} ↺`,
+        }),
+      ),
+      h('button', {
+        type: 'button',
+        class: 'link small',
+        onclick: () => {
+          state.hiddenVars.clear();
+          renderChart();
+        },
+        text: t('chart.restoreAll'),
+      }),
+    );
+  }
+
   function renderChart() {
     const m = state.model;
     if (!m) return;
@@ -3611,7 +4274,9 @@ tr.selected td {
     state.readouts = [];
     const chart = $('chart');
     chart.removeAttribute('data-hover');
-    const children = [axisLane(scale), stepLane(m, scale)];
+    chart.removeAttribute('data-pinned-hover');
+    renderHiddenVars();
+    const children = [axisLane(scale)];
     const { inputs, others, groups, missing } = lanesToDraw(m);
     // A name of the variables property that matches nothing is said, not dropped in silence.
     const note = $('chart-note');
@@ -3631,7 +4296,18 @@ tr.selected td {
       if (groups) children.push(h('div', { class: 'group', text: t('chart.others') }));
       children.push(...others.map((v) => variableLane(m, v, scale)));
     }
-    chart.replaceChildren(...children, h('div', { class: 'cursor-line', 'aria-hidden': 'true' }));
+    // Option A: shared-axis event lane sits BELOW the waveform lanes (and is omitted cleanly when steps is empty).
+    if (m.steps.length > 0) children.push(stepLane(m, scale));
+    chart.replaceChildren(
+      ...children,
+      h('div', {
+        id: 'cursor-line',
+        class: `cursor-line${state.pinned ? ' pinned' : ''}`,
+        'aria-hidden': 'true',
+      }),
+      h('div', { class: 'hover-line', 'aria-hidden': 'true' }),
+      h('div', { class: 'ref-line', 'aria-hidden': 'true' }),
+    );
     delete $('step-details').dataset.step;
     $('range').textContent = t('chart.showing', {
       from: fmtMs(scale.t0),
@@ -3640,6 +4316,10 @@ tr.selected td {
       end: fmtMs(m.domain[1]),
     });
     $('show-failure').hidden = !m.failure;
+    const atLeft = scale.t0 <= m.domain[0] + 1e-6;
+    const atRight = scale.t1 >= m.domain[1] - 1e-6;
+    $('pan-left').disabled = atLeft;
+    $('pan-right').disabled = atRight;
     updateCursor();
   }
 
@@ -3680,6 +4360,7 @@ tr.selected td {
 
   function axisLane(scale) {
     const height = 22;
+    const m = state.model;
     const { lane, svg } = laneShell(
       h('span', {
         class: 'muted small',
@@ -3691,45 +4372,54 @@ tr.selected td {
       scale,
       'axis',
     );
-    commonBack(svg, state.model, scale, height);
+    commonBack(svg, m, scale, height);
     const ticks = niceTicks(scale.t0, scale.t1, Math.max(2, Math.floor(scale.width / 90)));
-    for (const t of ticks) {
-      const x = scale.x(t);
+    const tickBoxes = [];
+    for (const tk of ticks) {
+      const x = scale.x(tk);
+      const label = fmtMs(tk);
+      tickBoxes.push([x, x + estimateTextWidth(label) + 6]);
       s('line', { class: 'tick', x1: x, x2: x, y1: height - 6, y2: height }, svg);
-      s('text', { class: 'tick-label', x: x + 3, y: height - 8, text: fmtMs(t) }, svg);
+      s('text', { class: 'tick-label', x: x + 3, y: height - 8, text: label }, svg);
+    }
+    // Label the shaded unrecorded tail without colliding with axis tick labels.
+    if (m.recordedTo !== null && m.recordedTo < scale.t1) {
+      const ux = Math.max(0, scale.x(m.recordedTo));
+      const label = t('chart.unrecorded');
+      const lw = estimateTextWidth(label) + 8;
+      if (scale.width - ux >= lw + 8) {
+        const overlaps = (a, b) => tickBoxes.some(([t0, t1]) => a < t1 + 4 && b > t0 - 4);
+        const leftX = ux + 6;
+        const rightX = scale.width - 6;
+        if (!overlaps(leftX, leftX + lw)) {
+          s('text', { class: 'unrecorded-label', x: leftX, y: height - 8, text: label }, svg);
+        } else if (!overlaps(rightX - lw, rightX)) {
+          s(
+            'text',
+            {
+              class: 'unrecorded-label',
+              x: rightX,
+              y: height - 8,
+              'text-anchor': 'end',
+              text: label,
+            },
+            svg,
+          );
+        }
+      }
     }
     return lane;
   }
 
   function stepLane(m, scale) {
-    const items = [];
-    for (const st of m.steps) {
-      if (!isNum(st.start_ms)) continue;
-      const start = st.start_ms;
-      let end = [st.end_ms, st.at_ms].filter(isNum).reduce((a, b) => Math.max(a, b), start);
-      const open = st.status === 'unfinished';
-      if (open) end = m.domain[1];
-      const limit =
-        isObject(st.watch) &&
-        st.watch.mode === 'once' &&
-        isNum(st.watch.to_ms) &&
-        st.watch.to_ms > end
-          ? st.watch.to_ms
-          : null;
-      if ((limit ?? end) < scale.t0 || start > scale.t1) continue;
-      const stName = nonEmptyString(st.name);
-      const label = stName ? `#${st.index} ${stName}` : `#${st.index} ${st.kind}`;
-      const labelWidth = label.length * 6.6 + 12;
-      const xs = Math.max(0, scale.x(start));
-      const xe = Math.min(scale.width, scale.x(limit ?? end));
-      // A label that would run off the right edge goes to the left of its step.
-      const left = xe - xs < labelWidth && xs + labelWidth > scale.width;
-      const x0 = left ? xs - labelWidth : xs;
-      const x1 = left ? Math.max(xe, xs + 7) : Math.max(xe, xs + labelWidth);
-      items.push({ st, start, end, limit, open, label, left, x0, x1 });
+    const { items, rows, count } = layoutStepItems(m.steps, scale, m.domain[1]);
+    const simGroups = sameStartGroups(m.steps);
+    const visibleClusters = [];
+    for (const [at, list] of simGroups) {
+      if (at >= scale.t0 && at <= scale.t1) visibleClusters.push({ at, steps: list });
     }
-    const { rows, count } = packRows(items, 6);
-    const height = count * STEP_ROW + 6;
+    const clusterH = visibleClusters.length ? 20 : 0;
+    const height = clusterH + count * STEP_ROW + 6;
     const head = h(
       'div',
       {},
@@ -3738,21 +4428,77 @@ tr.selected td {
     );
     const { lane, svg } = laneShell(head, height, scale, 'steps');
     commonBack(svg, m, scale, height);
+
+    // Draw simultaneous-timestamp tie lines and clickable/focusable ×N badges.
+    for (const cl of visibleClusters) {
+      const x = scale.x(cl.at);
+      s('line', { class: 'sim-tie', x1: x, x2: x, y1: 16, y2: height }, svg);
+      const badge = t('step.simultaneousBadge', { count: cl.steps.length });
+      const bw = Math.max(22, estimateTextWidth(badge) + 8);
+      const bx = Math.min(Math.max(2, x - bw / 2), Math.max(2, scale.width - bw - 2));
+      const targetStep = cl.steps.find((st) => st.status === 'failed') ?? cl.steps[0];
+      const cg = s(
+        'g',
+        {
+          class: 'sim-cluster',
+          'data-cluster-at': cl.at,
+          'data-step': targetStep.index,
+          tabindex: '0',
+          role: 'button',
+          'aria-label': t('step.simultaneousLabel', { at: fmtMs(cl.at), count: cl.steps.length }),
+        },
+        svg,
+      );
+      s('rect', { x: bx, y: 2, width: bw, height: 15, rx: 7 }, cg);
+      s('text', { x: bx + bw / 2, y: 13, 'text-anchor': 'middle', text: badge }, cg);
+      tooltip(
+        cg,
+        [
+          t('step.simultaneousHeading', { at: fmtMs(cl.at), count: cl.steps.length }),
+          ...cl.steps.map((st) => stepTitle(st, m.tl.scenario.file)),
+        ].join('\n'),
+      );
+      listen(cg, 'keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          focusStepImpl(targetStep.index, { preserveZoom: true });
+        }
+      });
+    }
+
     items.forEach((it, i) => {
-      const y = rows[i] * STEP_ROW + 4;
+      const y = clusterH + rows[i] * STEP_ROW + 4;
       const bh = STEP_ROW - 6;
       const chosen = it.st.index === state.step ? ' selected' : '';
       const g = s(
         'g',
-        { class: `step st-${statusClass(it.st.status)}${chosen}`, 'data-step': it.st.index },
+        {
+          class: `step st-${statusClass(it.st.status)}${chosen}`,
+          'data-step': it.st.index,
+          tabindex: '0',
+          role: 'button',
+          'aria-label': t('step.ariaLabel', {
+            index: it.st.index,
+            label: nonEmptyString(it.st.name) ?? String(it.st.kind),
+            status: statusWord(it.st.status),
+            at: fmtMs(it.start),
+          }),
+        },
         svg,
       );
+      listen(g, 'keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          focusStepImpl(it.st.index, { preserveZoom: true });
+        }
+      });
       const x0 = scale.x(it.start);
       const x1 = scale.x(it.end);
-      const point = x1 - x0 < 2;
       if (it.st.status === 'skipped') {
         s('rect', { class: 'skipped', x: x0 - 5, y, width: 10, height: bh }, g);
-      } else if (point) {
+      } else if (it.point) {
         s(
           'path',
           { class: 'marker', d: `M${x0} ${y} l6 ${bh / 2} l-6 ${bh / 2} l-6 ${-bh / 2} z` },
@@ -3776,20 +4522,45 @@ tr.selected td {
         s('line', { class: 'limit', x1, x2: xl, y1: y + bh / 2, y2: y + bh / 2 }, g);
         s('line', { class: 'limit', x1: xl, x2: xl, y1: y + 2, y2: y + bh - 2 }, g);
       }
-      if (it.left) {
-        s(
-          'text',
-          { class: 'step-label', x: x0 - 8, y: y + bh - 4, 'text-anchor': 'end', text: it.label },
-          g,
-        );
-      } else {
+      if (it.inside && it.narrow) {
+        const visX0 = Math.max(0, x0);
+        const visX1 = Math.min(scale.width, x1);
         s(
           'text',
           {
             class: 'step-label',
-            x: Math.max(x0, 0) + (point ? 8 : 5),
+            x: (visX0 + visX1) / 2,
             y: y + bh - 4,
-            text: it.label,
+            'text-anchor': 'middle',
+            text: it.displayLabel,
+          },
+          g,
+        );
+      } else if (it.left) {
+        s(
+          'text',
+          {
+            class: 'step-label',
+            x: x0 - (it.point ? 8 : 5),
+            y: y + bh - 4,
+            'text-anchor': 'end',
+            text: it.displayLabel,
+          },
+          g,
+        );
+      } else {
+        const lx = it.point
+          ? Math.max(x0, 0) + 8
+          : it.inside
+            ? Math.max(x0, 0) + 5
+            : Math.min(scale.width, x1) + 5;
+        s(
+          'text',
+          {
+            class: 'step-label',
+            x: lx,
+            y: y + bh - 4,
+            text: it.displayLabel,
           },
           g,
         );
@@ -3857,11 +4628,39 @@ tr.selected td {
         writtenStates.add(pointState(v.written, i));
       if (keptValue(v.written, writtenEnd)) writtenStates.add('held');
     }
+    const [fitLo, fitHi] = kind === 'number' ? laneRange(v, true) : [0, 1];
     const head = h(
       'div',
       {},
-      label ? h('span', { class: 'var-label', text: label }) : null,
-      h('code', { class: `var-name${v.failing ? ' failing' : ''}`, text: v.name }),
+      h(
+        'div',
+        { class: 'lane-head-top' },
+        h(
+          'div',
+          { class: 'lane-title' },
+          label ? h('span', { class: 'var-label', text: label }) : null,
+          h('code', { class: `var-name${v.failing ? ' failing' : ''}`, text: v.name }),
+        ),
+        h('button', {
+          type: 'button',
+          class: 'lane-hide',
+          'aria-label': t('lane.hide', { name: v.name }),
+          title: t('lane.hide', { name: v.name }),
+          onclick: () => {
+            const ev = new CustomEvent('variablehide', {
+              detail: { variable: v.name },
+              bubbles: true,
+              cancelable: true,
+            });
+            current.host.dispatchEvent(ev);
+            if (!ev.defaultPrevented && current.options.variables === null) {
+              state.hiddenVars.add(v.name);
+              renderChart();
+            }
+          },
+          text: '×',
+        }),
+      ),
       h('div', { class: 'muted small', text: meta }),
       h(
         'div',
@@ -3893,13 +4692,15 @@ tr.selected td {
               type: 'button',
               class: 'link',
               'aria-pressed': fit ? 'true' : 'false',
-              title: fit ? t('fit.toDeclared') : t('fit.toValues'),
+              title: fit
+                ? t('fit.toDeclared', { min: fmtNum(info.min), max: fmtNum(info.max) })
+                : t('fit.toValues', { min: fmtNum(fitLo), max: fmtNum(fitHi) }),
               onclick: () => {
                 if (state.fit.has(v.name)) state.fit.delete(v.name);
                 else state.fit.add(v.name);
                 renderChart();
               },
-              text: fit ? t('fit.declared') : t('fit.values'),
+              text: fit ? t('fit.values') : t('fit.declared'),
             })
           : null,
       ),
@@ -4161,6 +4962,29 @@ tr.selected td {
             x: Math.max(x0, 0) + 3,
             y: y + rh - 6,
             text: label,
+          },
+          svg,
+        );
+      } else if (
+        seg.from === seg.to &&
+        !unapplied(seg.state) &&
+        seg.state !== 'alone' &&
+        x0 >= 0 &&
+        x0 <= scale.width
+      ) {
+        // End-edge transition (e.g. bool/enum flips at recorded_to_ms): draw a crisp marker and → value badge.
+        s('line', { class: 'state-edge-tick', x1: x0, x2: x0, y1: y, y2: y + rh }, svg);
+        const edgeText = `→ ${name}`;
+        const edgeW = estimateTextWidth(edgeText) + 6;
+        const placeLeft = x0 + edgeW + 4 > scale.width;
+        s(
+          'text',
+          {
+            class: 'state-edge-label',
+            x: placeLeft ? x0 - 4 : x0 + 4,
+            y: y + rh - 5,
+            'text-anchor': placeLeft ? 'end' : 'start',
+            text: edgeText,
           },
           svg,
         );
@@ -4456,6 +5280,8 @@ tr.selected td {
     const plot = svg.parentElement;
     let down = null;
     let downStep = null;
+    let downShift = false;
+    let panOrigin = null;
     let sel = null;
     const xOf = (e) => {
       const r = svg.getBoundingClientRect();
@@ -4464,58 +5290,111 @@ tr.selected td {
     listen(plot, 'pointerdown', (e) => {
       if (e.button !== 0) return;
       $('chart').removeAttribute('data-hover');
+      $('chart').removeAttribute('data-pinned-hover');
       down = xOf(e);
-      // A click on a step chooses it (the pointer is captured, so the click itself goes to the lane).
+      downShift = Boolean(e.shiftKey);
+      panOrigin = downShift ? [...state.view] : null;
+      if (downShift && plot.classList) plot.classList.add('panning');
+      // A click on a step or cluster chooses it (the pointer is captured, so the click itself goes to the lane).
       const step = e.target.closest ? e.target.closest('[data-step]') : null;
       downStep = step ? stepOf(Number(step.dataset.step)) : null;
       plot.setPointerCapture(e.pointerId);
     });
     listen(plot, 'pointermove', (e) => {
       const x = xOf(e);
-      if (e.pointerType === 'mouse' && down === null) {
-        $('chart').setAttribute('data-hover', '');
+      const chart = $('chart');
+      if (down !== null && downShift && panOrigin) {
+        if (Math.abs(x - down) > 2) {
+          const span = panOrigin[1] - panOrigin[0];
+          const delta = -((x - down) / Math.max(1, scale.width)) * span;
+          setView(panView(state.model.domain, panOrigin, delta));
+        }
+        return;
       }
-      const step = e.target.closest('[data-step]');
-      moveCursor(scale.t(x), step ? stepOf(Number(step.dataset.step)) : null);
-      if (down !== null && Math.abs(x - down) > 4) {
+      if (e.pointerType === 'mouse' && down === null) {
+        if (state.pinned) {
+          chart.setAttribute('data-pinned-hover', '');
+          chart.style.setProperty('--hover-x', `${x}px`);
+          return;
+        }
+        chart.setAttribute('data-hover', '');
+      }
+      if (!state.pinned || down !== null) {
+        const step = e.target.closest ? e.target.closest('[data-step]') : null;
+        if (!state.pinned) {
+          moveCursor(scale.t(x), step ? stepOf(Number(step.dataset.step)) : null);
+        }
+      }
+      if (down !== null && !downShift && Math.abs(x - down) > 4) {
         if (!sel) sel = s('rect', { class: 'selection', y: 0, height }, svg);
         sel.setAttribute('x', Math.min(x, down));
         sel.setAttribute('width', Math.abs(x - down));
       }
     });
-    listen(plot, 'pointerleave', () => $('chart').removeAttribute('data-hover'));
+    listen(plot, 'pointerleave', () => {
+      const chart = $('chart');
+      chart.removeAttribute('data-hover');
+      chart.removeAttribute('data-pinned-hover');
+    });
     listen(plot, 'pointerup', (e) => {
       const x = xOf(e);
       const dragged = down !== null && Math.abs(x - down) > 4;
-      if (dragged) setView([scale.t(Math.min(x, down)), scale.t(Math.max(x, down))]);
-      else if (down !== null && downStep) showStep(downStep);
+      if (plot.classList) plot.classList.remove('panning');
+      if (dragged) {
+        if (downShift && panOrigin) {
+          const span = panOrigin[1] - panOrigin[0];
+          const delta = -((x - down) / Math.max(1, scale.width)) * span;
+          setView(panView(state.model.domain, panOrigin, delta));
+        } else {
+          setView([scale.t(Math.min(x, down)), scale.t(Math.max(x, down))]);
+        }
+      } else if (down !== null) {
+        const t = scale.t(x);
+        if (downShift) {
+          if (state.refCursor !== null && Math.abs(scale.x(state.refCursor) - x) <= 6) {
+            state.refCursor = null;
+          } else {
+            state.refCursor = t;
+          }
+          updateCursor();
+        } else if (downStep) {
+          const targetAt =
+            downStep.status === 'failed'
+              ? (downStep.failed?.at_ms ?? downStep.at_ms ?? downStep.start_ms)
+              : (downStep.start_ms ?? downStep.at_ms);
+          if (isNum(targetAt)) {
+            state.pinned = true;
+            state.pinnedCursor = targetAt;
+            moveCursor(targetAt, downStep);
+          }
+          showStep(downStep, false, { preserveZoom: true });
+        } else {
+          state.pinned = true;
+          state.pinnedCursor = t;
+          moveCursor(t);
+        }
+      }
       down = null;
       downStep = null;
+      downShift = false;
+      panOrigin = null;
       if (sel) sel.remove();
       sel = null;
     });
     listen(plot, 'pointercancel', () => {
+      if (plot.classList) plot.classList.remove('panning');
       down = null;
       downStep = null;
+      downShift = false;
+      panOrigin = null;
       if (sel) sel.remove();
       sel = null;
     });
     listen(plot, 'dblclick', () => setView(state.model.domain));
   }
 
-  /** A readable description of the step, kept outside the plot so it never covers the waveforms. */
-  function updateStepDetails(preferred) {
-    const m = state.model;
-    const panel = $('step-details');
-    const step =
-      preferred ??
-      stepOf(state.step) ??
-      m?.failure?.step ??
-      m?.steps.find((st) => Array.isArray(st.watch?.conditions) && st.watch.conditions.length) ??
-      m?.steps[0];
-    panel.hidden = !step;
-    if (!step || panel.dataset.step === String(step.index)) return;
-    panel.dataset.step = String(step.index);
+  /** Renders one step's details body (heading, call stack, watch conditions or text). */
+  function renderStepBlock(m, step, selected, clickable) {
     const title = stepTitle(step, m.tl.scenario.file);
     const stepName = nonEmptyString(step.name);
     const frames = callStackFrames(step.call_stack, m.tl.scenario.file);
@@ -4535,47 +5414,103 @@ tr.selected td {
       during: 'step.matchThroughout',
     };
     const mode = Object.hasOwn(modes, watch?.mode) ? modes[watch.mode] : null;
-    panel.replaceChildren(
-      ...[
-        h(
-          'div',
-          { class: 'detail-heading' },
-          h('strong', { text: title }),
-          stepName ? h('span', { text: stepName }) : null,
-          h('span', { class: 'muted', text: timings }),
-        ),
-        frames.length
-          ? h(
-              'div',
-              { class: 'muted small', 'data-testid': 'step-call-stack' },
-              `${t('failure.calledFrom')} ${frames.join(' → ')}`,
-            )
-          : null,
-        conditions.length
-          ? h(
-              'div',
+    const titleEl = clickable
+      ? h('button', {
+          type: 'button',
+          class: 'link',
+          onclick: () => focusStepImpl(step.index, { preserveZoom: true }),
+          text: title,
+        })
+      : h('strong', { text: title });
+    return [
+      h(
+        'div',
+        { class: clickable ? 'sim-item-head' : 'detail-heading' },
+        titleEl,
+        stepName ? h('span', { text: stepName }) : null,
+        h('span', { class: 'muted', text: timings }),
+      ),
+      frames.length
+        ? h(
+            'div',
+            { class: 'muted small', 'data-testid': 'step-call-stack' },
+            `${t('failure.calledFrom')} ${frames.join(' → ')}`,
+          )
+        : null,
+      conditions.length
+        ? h(
+            'div',
+            {},
+            mode
+              ? h('div', {
+                  text: t(mode, { from: fmtMs(watch.from_ms), to: fmtMs(watch.to_ms) }),
+                })
+              : null,
+            h(
+              'ul',
               {},
-              mode
-                ? h('div', {
-                    text: t(mode, { from: fmtMs(watch.from_ms), to: fmtMs(watch.to_ms) }),
-                  })
-                : null,
-              h(
-                'ul',
-                {},
-                conditions.map((c) =>
-                  h(
-                    'li',
-                    {},
-                    h('code', { text: c.variable }),
-                    ` ${compareText(c.compare, m.byName.get(c.variable)?.info)}`,
-                  ),
+              conditions.map((c) =>
+                h(
+                  'li',
+                  {},
+                  h('code', { text: c.variable }),
+                  ` ${compareText(c.compare, m.byName.get(c.variable)?.info)}`,
                 ),
               ),
-            )
-          : h('div', { text: step.text ?? '' }),
-      ].filter(Boolean),
-    );
+            ),
+          )
+        : h('div', { text: step.text ?? '' }),
+      step.message ? h('div', { class: 'message st-failed', text: step.message }) : null,
+    ].filter(Boolean);
+  }
+
+  /** A readable description of the step (and all simultaneous sibling steps), kept outside the plot. */
+  function updateStepDetails(preferred) {
+    const m = state.model;
+    const panel = $('step-details');
+    const step =
+      preferred ??
+      stepOf(state.step) ??
+      m?.failure?.step ??
+      m?.steps.find((st) => Array.isArray(st.watch?.conditions) && st.watch.conditions.length) ??
+      m?.steps[0];
+    panel.hidden = !step;
+    if (!step) return;
+    const siblings = isNum(step.start_ms) ? sameStartGroups(m.steps).get(step.start_ms) : null;
+    const sig = siblings
+      ? `sim:${step.start_ms}:${step.index}:${siblings.map((x) => x.index).join(',')}`
+      : String(step.index);
+    if (panel.dataset.step === sig) return;
+    panel.dataset.step = sig;
+    if (siblings && siblings.length >= 2) {
+      panel.replaceChildren(
+        h('div', {
+          class: 'sim-banner',
+          'data-testid': 'simultaneous-banner',
+          text: t('step.simultaneousHeading', {
+            at: fmtMs(step.start_ms),
+            count: siblings.length,
+          }),
+        }),
+        h(
+          'div',
+          { class: 'sim-list', 'data-testid': 'simultaneous-list' },
+          ...siblings.map((sib) =>
+            h(
+              'div',
+              {
+                class: `sim-item${sib.index === step.index ? ' selected' : ''}`,
+                'data-sim-step': sib.index,
+              },
+              ...renderStepBlock(m, sib, sib.index === step.index, true),
+            ),
+          ),
+        ),
+      );
+      panel.scrollTop = 0;
+      return;
+    }
+    panel.replaceChildren(...renderStepBlock(m, step, true, false));
     panel.scrollTop = 0;
   }
 
@@ -4583,6 +5518,30 @@ tr.selected td {
     const m = state.model;
     const at = state.cursor;
     const chart = $('chart');
+    const cursorLine = $('cursor-line');
+    if (cursorLine) {
+      cursorLine.className = ['cursor-line', state.pinned ? 'pinned' : '']
+        .filter(Boolean)
+        .join(' ');
+    }
+    const unpinBtn = $('unpin-cursor');
+    if (unpinBtn) unpinBtn.hidden = !state.pinned;
+    const clearRefBtn = $('clear-ref');
+    if (clearRefBtn) clearRefBtn.hidden = state.refCursor === null;
+
+    if (
+      m &&
+      state.refCursor !== null &&
+      state.refCursor >= state.view[0] &&
+      state.refCursor <= state.view[1]
+    ) {
+      const refScale = makeScale(state.view[0], state.view[1], state.width);
+      chart.setAttribute('data-ref', '');
+      chart.style.setProperty('--ref-x', `${refScale.x(state.refCursor)}px`);
+    } else {
+      chart.removeAttribute('data-ref');
+    }
+
     if (!m || at === null || at < state.view[0] || at > state.view[1]) {
       chart.removeAttribute('data-hover');
       chart.removeAttribute('data-cursor-side');
@@ -4612,16 +5571,27 @@ tr.selected td {
       hoverValue.textContent = values || '—';
     }
     const time = $('cursor-time');
-    time.title = time.textContent = t('chart.cursor', { at: fmtMs(Number(at.toPrecision(6))) });
+    const atText = fmtMs(Number(at.toPrecision(6)));
+    let timeText = state.pinned
+      ? t('chart.cursorPinned', { at: atText })
+      : t('chart.cursor', { at: atText });
+    if (state.refCursor !== null) {
+      const diff = Number((at - state.refCursor).toPrecision(6));
+      const sign = diff > 0 ? '+' : '';
+      timeText = t('chart.cursorDelta', { at: timeText, delta: `${sign}${fmtMs(diff)}` });
+    }
+    time.title = time.textContent = timeText;
     const active = m.steps.filter((st) => {
       if (!isNum(st.start_ms)) return false;
       const e = [st.end_ms, st.at_ms].filter(isNum).reduce((a, b) => Math.max(a, b), st.start_ms);
       return at >= st.start_ms && (at <= e || st.status === 'unfinished');
     });
     const steps = $('cursor-steps');
-    steps.title = steps.textContent = active
-      .map((st) => `#${st.index} ${st.kind} (${statusWord(st.status)})`)
-      .join(', ');
+    if (steps) {
+      steps.title = steps.textContent = active
+        .map((st) => `#${st.index} ${st.kind} (${statusWord(st.status)})`)
+        .join(', ');
+    }
     const inspected = hoveredStep ?? (hoveredStep === undefined ? stepOf(state.step) : null);
     updateStepDetails(inspected ?? active.find((st) => isObject(st.watch)) ?? active[0]);
   }
@@ -4804,10 +5774,36 @@ tr.selected td {
           h('button', { id: 'show-failure', type: 'button', 'data-text': 'page.showFailure' }),
           h('button', { id: 'show-all', type: 'button', 'data-text': 'page.whole' }),
           h('button', { id: 'zoom-out', type: 'button', 'data-text': 'page.zoomOut' }),
+          h('button', {
+            id: 'pan-left',
+            type: 'button',
+            'data-label': 'page.panLeft',
+            text: '◀',
+          }),
+          h('button', {
+            id: 'pan-right',
+            type: 'button',
+            'data-label': 'page.panRight',
+            text: '▶',
+          }),
+          h('button', {
+            id: 'unpin-cursor',
+            type: 'button',
+            'data-text': 'page.unpinCursor',
+            hidden: true,
+          }),
+          h('button', {
+            id: 'clear-ref',
+            type: 'button',
+            'data-text': 'page.clearRef',
+            hidden: true,
+          }),
           h('span', { id: 'participants', class: 'toolbar' }),
         ),
         h('p', { id: 'help', class: 'muted small', 'data-text': 'page.help' }),
+        h('div', { id: 'hidden-vars', hidden: true }),
         h('p', { id: 'chart-note', class: 'note small', role: 'status', hidden: true }),
+        h('div', { id: 'chart', tabindex: '0', 'data-label': 'page.chartLabel' }),
         h('section', {
           id: 'step-details',
           class: 'small',
@@ -4815,7 +5811,7 @@ tr.selected td {
           tabindex: '0',
           hidden: true,
         }),
-        h('div', { id: 'chart', tabindex: '0', 'data-label': 'page.chartLabel' }),
+        h('p', { id: 'chart-hint', 'data-text': 'page.hint' }),
         h('div', { id: 'tables' }),
       ),
     ];
@@ -4830,16 +5826,67 @@ tr.selected td {
 
   /** The buttons and keys of the chart. */
   function attachControls() {
-    listen($('show-failure'), 'click', () => setView(initialView(state.model)));
+    listen($('show-failure'), 'click', () => jumpToFailureImpl({ preserveZoom: true }));
     listen($('show-all'), 'click', () => setView(state.model.domain));
     listen($('zoom-out'), 'click', () => {
       const [t0, t1] = state.view;
       const half = t1 - t0;
       setView([t0 - half / 2, t1 + half / 2]);
     });
+    listen($('pan-left'), 'click', () => {
+      if (!state.model || !state.view) return;
+      const span = state.view[1] - state.view[0];
+      setView(panView(state.model.domain, state.view, -span * 0.25));
+    });
+    listen($('pan-right'), 'click', () => {
+      if (!state.model || !state.view) return;
+      const span = state.view[1] - state.view[0];
+      setView(panView(state.model.domain, state.view, span * 0.25));
+    });
+    listen($('unpin-cursor'), 'click', () => {
+      state.pinned = false;
+      state.pinnedCursor = null;
+      updateCursor();
+    });
+    listen($('clear-ref'), 'click', () => {
+      state.refCursor = null;
+      updateCursor();
+    });
     const chart = $('chart');
+    chart.addEventListener(
+      'wheel',
+      bound((e) => {
+        if (!state.model || !state.view) return;
+        if (!e.ctrlKey && !e.metaKey) return;
+        e.preventDefault();
+        const [t0, t1] = state.view;
+        const plot =
+          typeof chart.querySelector === 'function' ? chart.querySelector('.lane-plot') : null;
+        let anchor = state.cursor ?? (t0 + t1) / 2;
+        if (plot && state.width > 0) {
+          const r = plot.getBoundingClientRect();
+          const px = Math.min(state.width, Math.max(0, e.clientX - r.left));
+          anchor = makeScale(t0, t1, state.width).t(px);
+        }
+        const k = e.deltaY > 0 ? 1.25 : 0.8;
+        const nextSpan = Math.max(1e-6, (t1 - t0) * k);
+        const ratio = (anchor - t0) / Math.max(1e-9, t1 - t0);
+        setView([anchor - nextSpan * ratio, anchor + nextSpan * (1 - ratio)]);
+      }),
+      { passive: false },
+    );
     listen(chart, 'keydown', (e) => {
       if (!state.model) return;
+      if (e.key === 'Escape') {
+        if (state.pinned || state.refCursor !== null) {
+          e.preventDefault();
+          state.pinned = false;
+          state.pinnedCursor = null;
+          state.refCursor = null;
+          updateCursor();
+        }
+        return;
+      }
       if (e.key === '+' || e.key === '=' || e.key === '-') {
         // Zoom in or out around the cursor (or the middle of the view).
         e.preventDefault();
@@ -4855,12 +5902,12 @@ tr.selected td {
       const stepT =
         (state.model.timeStep ?? (state.view[1] - state.view[0]) / 100) * (e.shiftKey ? 10 : 1);
       const t = state.cursor ?? state.view[0];
-      moveCursor(
-        Math.min(
-          state.view[1],
-          Math.max(state.view[0], t + (e.key === 'ArrowLeft' ? -stepT : stepT)),
-        ),
+      const next = Math.min(
+        state.view[1],
+        Math.max(state.view[0], t + (e.key === 'ArrowLeft' ? -stepT : stepT)),
       );
+      if (state.pinned) state.pinnedCursor = next;
+      moveCursor(next);
     });
     let lastWidth = 0;
     new ResizeObserver(
@@ -4898,6 +5945,14 @@ tr.selected td {
   const list = (v) => {
     if (v === null || v === undefined) return null;
     const items = (Array.isArray(v) ? v.map(String) : String(v).split(/[\s,]+/)).filter(Boolean);
+    return items.length ? items : null;
+  };
+  const varList = (v) => {
+    if (v === null || v === undefined) return null;
+    if (Array.isArray(v)) return v.map(String).filter(Boolean);
+    const items = String(v)
+      .split(/[\s,]+/)
+      .filter(Boolean);
     return items.length ? items : null;
   };
 
@@ -5112,6 +6167,10 @@ tr.selected td {
         }
         if (what.has('cursor')) {
           state.cursor = o.cursor;
+          if (o.cursor === null) {
+            state.pinned = false;
+            state.pinnedCursor = null;
+          }
           updateCursor();
         }
       } finally {
@@ -5122,6 +6181,38 @@ tr.selected td {
     /** Loads src again (the file may have changed, or the token). */
     reload() {
       this.#change('source');
+    }
+
+    /** Jumps to the failure timestamp, pinning the cursor and selecting the failed step. */
+    jumpToFailure(options) {
+      const c = this.#c;
+      enter(c);
+      if (!state.model) return false;
+      if (c.changes.has('from') || c.changes.has('to')) {
+        const from =
+          c.changes.has('from') && c.options.from !== null ? c.options.from : state.view[0];
+        const to = c.changes.has('to') && c.options.to !== null ? c.options.to : state.view[1];
+        c.changes.delete('from');
+        c.changes.delete('to');
+        setView([from, to], true);
+      }
+      return jumpToFailureImpl(options);
+    }
+
+    /** Focuses a step by its 1-based index, pinning the cursor to its timestamp. */
+    focusStep(index, options) {
+      const c = this.#c;
+      enter(c);
+      if (!state.model) return false;
+      if (c.changes.has('from') || c.changes.has('to')) {
+        const from =
+          c.changes.has('from') && c.options.from !== null ? c.options.from : state.view[0];
+        const to = c.changes.has('to') && c.options.to !== null ? c.options.to : state.view[1];
+        c.changes.delete('from');
+        c.changes.delete('to');
+        setView([from, to], true);
+      }
+      return focusStepImpl(number(index), options);
     }
 
     // --- the simple options
@@ -5161,7 +6252,7 @@ tr.selected td {
       return this.#c.options.variables ? [...this.#c.options.variables] : null;
     }
     set variables(v) {
-      this.#c.options.variables = list(v);
+      this.#c.options.variables = varList(v);
       this.#change('chart');
     }
     get cursor() {

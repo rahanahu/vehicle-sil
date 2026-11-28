@@ -876,6 +876,13 @@ test('the types (vehicle-sil-timeline.d.ts) name every option of the element, an
   );
   const typed = [...element.matchAll(/^ {2}(\w+)(?:\(\))?: /gm)].map((m) => m[1]);
   assert.deepEqual(typed.sort(), [...options, ...properties, 'reload'].sort());
+  // Additive methods and events are declared on VehicleSilTimelineElement / VehicleSilTimelineEventMap
+  assert.match(types, /^ {2}jumpToFailure\(options\?: VehicleSilTimelineFocusOptions\): boolean;/m);
+  assert.match(
+    types,
+    /^ {2}focusStep\(index: number, options\?: VehicleSilTimelineFocusOptions\): boolean;/m,
+  );
+  assert.match(types, /^ {2}variablehide: CustomEvent<\{ variable: string \}>;/m);
   // The parts of hide: the type, the element's check and the CSS name the same words
   const union = /export type VehicleSilTimelinePart =([^;]+);/.exec(types)[1];
   const parts = [...union.matchAll(/'(\w+)'/g)].map((m) => m[1]);
@@ -1079,11 +1086,26 @@ const makeMockDom = () => {
       this._text = '';
       this.append(...nodes);
     }
-    addEventListener() {}
+    addEventListener(type, fn) {
+      if (!this._listeners) this._listeners = new Map();
+      let list = this._listeners.get(type);
+      if (!list) {
+        list = [];
+        this._listeners.set(type, list);
+      }
+      list.push(fn);
+    }
     getElementById(id) {
       return byTag(this, (n) => n.attrs.id === id)[0] || null;
     }
     querySelectorAll(sel) {
+      if (sel.startsWith('.')) {
+        const cls = sel.slice(1);
+        return byTag(this, (n) => {
+          const c = n.className || n.attrs.class || '';
+          return c.split(/\s+/).includes(cls);
+        });
+      }
       if (sel.startsWith('[') && sel.endsWith(']')) {
         const inner = sel.slice(1, -1);
         const eq = inner.indexOf('=');
@@ -1106,7 +1128,9 @@ const makeMockDom = () => {
     attachShadow() {
       return this._shadow;
     }
-    dispatchEvent() {
+    dispatchEvent(ev) {
+      const list = this._listeners?.get(ev.type) ?? [];
+      for (const fn of list) fn.call(this, ev);
       return true;
     }
   }
@@ -2780,4 +2804,355 @@ test('multi-ne integer intersection omits slices when every integer in [intLo, i
       .bands[0].slices.map((s) => [s.from, s.to, s.lo, s.hi, s.excluded]),
     [[0, 20, 10, 11, [10]]],
   );
+});
+
+test('logic analyzer: event lane sits below variable lanes and is omitted cleanly when steps is empty', async () => {
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = reference('fails_beside');
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  const chart = el._shadow.getElementById('chart');
+  const laneClasses = chart.children
+    .filter((c) => typeof c.className === 'string' && c.className.split(' ').includes('lane'))
+    .map((c) => c.className);
+  assert.ok(laneClasses[0].includes('axis'), 'axis lane is first');
+  assert.ok(laneClasses.at(-1).includes('steps'), 'steps lane is at the bottom below waveforms');
+
+  // Eventless timeline omits the event lane completely and uses clean summary text.
+  const eventless = JSON.parse(JSON.stringify(reference('motions')));
+  eventless.steps = [];
+  eventless.lines = [];
+  const el2 = new Element();
+  el2.data = eventless;
+  el2.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  const chart2 = el2._shadow.getElementById('chart');
+  const stepLanes2 = chart2.children.filter(
+    (c) => typeof c.className === 'string' && c.className.split(' ').includes('steps'),
+  );
+  assert.equal(stepLanes2.length, 0, 'eventless recording omits empty steps lane');
+  assert.equal(el2._shadow.getElementById('step-details').hidden, true);
+  const summaryText = el2._shadow.getElementById('summary').textContent;
+  assert.match(summaryText, /Passed \(no scenario steps\)/);
+  assert.doesNotMatch(summaryText, /0 steps/);
+});
+
+test('logic analyzer: pixel-width row packing prevents label overlap and labels narrow bars concisely', () => {
+  const scale = T.makeScale(0, 940, 1000);
+  const steps = [
+    {
+      index: 3,
+      kind: 'ramp',
+      name: 'prefill brake pressure',
+      status: 'passed',
+      start_ms: 100,
+      at_ms: 120,
+      end_ms: 120,
+    },
+    {
+      index: 4,
+      kind: 'set',
+      name: 'engage AEB and regen cut',
+      status: 'passed',
+      start_ms: 200,
+      at_ms: 200,
+      end_ms: 200,
+    },
+    {
+      index: 5,
+      kind: 'ramp',
+      name: 'short ramp',
+      status: 'passed',
+      start_ms: 200,
+      at_ms: 220,
+      end_ms: 220,
+    },
+    {
+      index: 6,
+      kind: 'ramp',
+      name: 'ramp deceleration to -7.5 m/s^2',
+      status: 'passed',
+      start_ms: 220,
+      at_ms: 520,
+      end_ms: 520,
+    },
+  ];
+  const { items, rows } = T.layoutStepItems(steps, scale, 940);
+  // Every pair of items on the same row must have non-overlapping pixel boxes.
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      if (rows[i] !== rows[j]) continue;
+      assert.ok(
+        items[i].x1 <= items[j].x0 || items[j].x1 <= items[i].x0,
+        `items #${items[i].st.index} and #${items[j].st.index} overlap on row ${rows[i]}`,
+      );
+    }
+  }
+  // Point event #4 and adjacent bar #6 cannot share the same row because #4's label extends past 220 ms.
+  const idx4 = items.findIndex((it) => it.st.index === 4);
+  const idx6 = items.findIndex((it) => it.st.index === 6);
+  assert.notEqual(rows[idx4], rows[idx6], '#4 label and #6 bar are placed on separate rows');
+  // Narrow bars (#3, #5 ~21px wide) get concise #N labels instead of being blank.
+  const it3 = items.find((it) => it.st.index === 3);
+  const it5 = items.find((it) => it.st.index === 5);
+  assert.equal(it3.displayLabel, '#3');
+  assert.equal(it5.displayLabel, '#5');
+});
+
+test('logic analyzer: simultaneous events render cluster badge and list all siblings with unordered wording', async () => {
+  const tl = JSON.parse(JSON.stringify(reference('fails_beside')));
+  tl.steps = [
+    {
+      index: 1,
+      line: 5,
+      kind: 'set',
+      name: 'override pulse',
+      text: 'set Body.level = 30',
+      status: 'passed',
+      start_ms: 50,
+      at_ms: 50,
+      end_ms: 50,
+      code: null,
+      message: null,
+      lines: [],
+      watch: null,
+      failed: null,
+    },
+    {
+      ...tl.steps[1],
+      index: 2,
+      start_ms: 50,
+      name: 'braking check',
+    },
+  ];
+  const groups = T.sameStartGroups(tl.steps);
+  assert.equal(groups.size, 1);
+  assert.deepEqual(
+    groups.get(50).map((s) => s.index),
+    [1, 2],
+  );
+
+  const { Element } = makeMockDom();
+  const el = new Element();
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+
+  const clusters = el._shadow.querySelectorAll('.sim-cluster');
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].getAttribute('tabindex'), '0');
+  assert.equal(clusters[0].getAttribute('role'), 'button');
+  assert.match(clusters[0].textContent, /×2/);
+
+  const banner = el._shadow.querySelectorAll('[data-testid=simultaneous-banner]');
+  assert.equal(banner.length, 1);
+  assert.match(banner[0].textContent, /display order does not imply causal order/i);
+  const items = el._shadow.querySelectorAll('[data-sim-step]');
+  assert.equal(items.length, 2);
+
+  // Japanese wording explicitly states non-causal order.
+  el.setAttribute('lang', 'ja');
+  el.attributeChangedCallback('lang', null, 'ja');
+  await new Promise((r) => Promise.resolve().then(r));
+  const bannerJa = el._shadow.querySelectorAll('[data-testid=simultaneous-banner]');
+  assert.equal(bannerJa.length, 1);
+  assert.match(bannerJa[0].textContent, /表示順は因果関係を示しません/);
+});
+
+test('logic analyzer: pre-failure framing, zoom-preserving jump/focus, pan clamping, and end-edge state marker', async () => {
+  const tl = makeDynamicTimeline({
+    variables: [
+      {
+        name: 'Brake.pressure',
+        participant: 'Brake',
+        type: 'real',
+        causality: 'output',
+        unit: 'bar',
+        min: 0,
+        max: 200,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'Brake.fault_latch',
+        participant: 'Brake',
+        type: 'bool',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: [],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+      {
+        name: 'ADAS.aeb_state',
+        participant: 'ADAS',
+        type: 'enum',
+        causality: 'output',
+        unit: '',
+        min: null,
+        max: null,
+        items: [
+          { name: 'braking', value: 1 },
+          { name: 'degraded', value: 2 },
+        ],
+        ecu_step_ms: 10,
+        written: false,
+        watched: true,
+      },
+    ],
+    steps: [
+      {
+        index: 1,
+        line: 4,
+        kind: 'set',
+        text: 'set initial',
+        status: 'passed',
+        start_ms: 0,
+        at_ms: 0,
+        end_ms: 0,
+        code: null,
+        message: null,
+        lines: [],
+        watch: null,
+        failed: null,
+      },
+      {
+        index: 2,
+        line: 8,
+        kind: 'ramp',
+        name: 'long braking ramp',
+        text: 'ramp Brake.pressure to 120 over 400 ms',
+        status: 'failed',
+        start_ms: 540,
+        at_ms: 640,
+        end_ms: 940,
+        code: 'scenario-failed',
+        message: 'pressure dropped',
+        lines: [],
+        watch: {
+          mode: 'during',
+          from_ms: 540,
+          to_ms: 940,
+          conditions: [
+            { variable: 'Brake.pressure', compare: [{ op: 'ge', value: 100, tolerance: null }] },
+          ],
+        },
+        failed: {
+          at_ms: 640,
+          code: 'scenario-failed',
+          conditions: [{ condition: 0, value: 88, sample_ms: 640 }],
+          writes: [],
+          write: null,
+        },
+      },
+    ],
+    series: [
+      makeSeries(
+        'Brake.pressure',
+        'sampled',
+        [
+          [0, 120],
+          [600, 110],
+          [640, 88],
+        ],
+        { last_ms: 640 },
+      ),
+      makeSeries(
+        'Brake.fault_latch',
+        'sampled',
+        [
+          [0, false],
+          [640, true],
+        ],
+        { last_ms: 640 },
+      ),
+      makeSeries(
+        'ADAS.aeb_state',
+        'sampled',
+        [
+          [0, 1],
+          [620, 2],
+        ],
+        { last_ms: 640 },
+      ),
+    ],
+  });
+  tl.scenario.status = 'failed';
+  tl.scenario.recorded_to_ms = 640;
+  tl.scenario.over_at_ms = 650;
+
+  const m = model(tl);
+  // Pre-failure framing respects recorded_to_ms = 640 instead of wasting 60% on 640..940 unrecorded tail.
+  const [i0, i1] = T.initialView(m);
+  assert.ok((640 - i0) / (i1 - i0) >= 0.75, `expected >=75% pre-failure, got [${i0}, ${i1}]`);
+  const [s0, s1] = T.stepViewFor(m, m.steps[1]);
+  assert.ok((640 - s0) / (s1 - s0) >= 0.75, `failed stepView respects recordedTo: [${s0}, ${s1}]`);
+
+  // Zoom-preserving jump keeps exact 150 ms zoom span and positions 640 ms at 80%.
+  const [j0, j1] = T.failureJumpView(m, [150, 300], true);
+  assert.ok(Math.abs(j1 - j0 - 150) < 1e-6);
+  assert.ok(Math.abs(j0 - 520) < 1e-6 && Math.abs(j1 - 670) < 1e-6);
+
+  // panView clamps cleanly without changing span.
+  assert.deepEqual(T.panView([0, 1000], [100, 250], -200), [0, 150]);
+  assert.deepEqual(T.panView([0, 1000], [800, 950], 200), [850, 1000]);
+
+  // modelMetadata computes relatedToFailure and changedNearFailure accurately.
+  const meta = T.modelMetadata(m, 'brake.timeline.json');
+  assert.equal(meta.recordedTo, 640);
+  assert.equal(meta.stepCount, 2);
+  assert.equal(meta.failure.step, 2);
+  assert.equal(meta.failure.at, 640);
+  const byVar = new Map(meta.variables.map((v) => [v.name, v]));
+  assert.equal(byVar.get('Brake.pressure').relatedToFailure, true);
+  assert.equal(byVar.get('ADAS.aeb_state').relatedToFailure, false);
+  assert.equal(byVar.get('ADAS.aeb_state').changedNearFailure, true);
+
+  // Element API: jumpToFailure preserves zoom, pins cursor, selects failed step, and survives variables filter.
+  const { Element } = makeMockDom();
+  const el = new Element();
+  let loaded = null;
+  el.addEventListener('load', (e) => {
+    loaded = e.detail;
+  });
+  el.data = tl;
+  el.connectedCallback();
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(loaded.failure.at, 640);
+
+  // End-edge bool transition at recorded_to_ms (640 ms) draws crisp → true badge.
+  const edgeLabels = el._shadow.querySelectorAll('.state-edge-label');
+  assert.ok(
+    edgeLabels.some((n) => n.textContent.includes('→ true')),
+    'end-edge transition marker renders → true',
+  );
+
+  el.from = 150;
+  el.to = 300;
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.equal(el.jumpToFailure({ preserveZoom: true }), true);
+  assert.ok(Math.abs(el.to - el.from - 150) < 1e-6);
+  assert.equal(el.cursor, 640);
+  assert.equal(el.step, 2);
+
+  // Filtering signals (including empty array) never resets zoom, cursor, or step.
+  el.variables = ['Brake.pressure'];
+  await new Promise((r) => Promise.resolve().then(r));
+  assert.ok(Math.abs(el.to - el.from - 150) < 1e-6);
+  assert.equal(el.cursor, 640);
+  assert.equal(el.step, 2);
+
+  el.variables = [];
+  await new Promise((r) => Promise.resolve().then(r));
+  const varNames = el._shadow.querySelectorAll('.var-name');
+  assert.equal(varNames.length, 0, 'explicit empty variables array hides all variable lanes');
+  assert.equal(el.cursor, 640);
+  assert.equal(el.step, 2);
 });

@@ -49,6 +49,59 @@ export interface VehicleSilTimelineFailedCondition {
   compared?: VehicleSilTimelineFailedCompared[];
 }
 
+/** Metadata about one variable in a loaded timeline, emitted in `load` event detail. */
+export interface VehicleSilTimelineLoadVariable {
+  name: string;
+  participant: string;
+  type: string;
+  causality: string | null;
+  unit: string;
+  written: boolean;
+  watched: boolean;
+  failing: boolean;
+  relatedToFailure: boolean;
+  changedNearFailure: boolean;
+}
+
+/** One unmet condition summary in `load` event detail. */
+export interface VehicleSilTimelineLoadFailureCondition {
+  variable: string | null;
+  compare: string | null;
+  valueText: string | null;
+  sampleMs: number | null;
+  compared: Array<{
+    variable: string | null;
+    valueText: string | null;
+    sampleMs: number | null;
+  }>;
+}
+
+/** One write summary in `load` event detail for a failed step. */
+export interface VehicleSilTimelineLoadFailureWrite {
+  variable: string;
+  at: number | null;
+  valueText: string;
+  applied: boolean | null;
+  cause: boolean;
+}
+
+/** Failure summary emitted in `load` event detail when the scenario failed. */
+export interface VehicleSilTimelineLoadFailure {
+  step: number;
+  at: number | null;
+  name: string | null;
+  text: string;
+  message: string | null;
+  conditions: VehicleSilTimelineLoadFailureCondition[];
+  writes: VehicleSilTimelineLoadFailureWrite[];
+}
+
+/** Options for zoom-preserving navigation methods on `<vehicle-sil-timeline>`. */
+export interface VehicleSilTimelineFocusOptions {
+  /** Keep the current zoom width when already zoomed in (defaults to true). */
+  preserveZoom?: boolean;
+}
+
 export interface VehicleSilTimelineLoadDetail {
   /** The file's name (file-name, or the name the server gives), or null. */
   file: string | null;
@@ -59,6 +112,14 @@ export interface VehicleSilTimelineLoadDetail {
   /** The whole run that can be shown, in virtual ms. */
   start: number;
   end: number;
+  /** The last virtual timestamp recorded in the timeline, or null. */
+  recordedTo: number | null;
+  /** Number of scenario steps in the loaded timeline. */
+  stepCount: number;
+  /** Failure summary when the scenario failed, else null. */
+  failure: VehicleSilTimelineLoadFailure | null;
+  /** Variables present in the timeline with failure-relevance and activity flags. */
+  variables: VehicleSilTimelineLoadVariable[];
 }
 
 export interface VehicleSilTimelineErrorDetail {
@@ -74,6 +135,7 @@ export interface VehicleSilTimelineEventMap {
   cursorchange: CustomEvent<{ cursor: number | null }>;
   stepselect: CustomEvent<{ step: number | null }>;
   viewchange: CustomEvent<{ from: number; to: number }>;
+  variablehide: CustomEvent<{ variable: string }>;
 }
 
 export interface VehicleSilTimelineElement extends HTMLElement {
@@ -111,6 +173,10 @@ export interface VehicleSilTimelineElement extends HTMLElement {
   messages: VehicleSilTimelineMessages | null;
   /** Loads src again. */
   reload(): void;
+  /** Jumps to the failure timestamp, pinning the cursor and selecting the failed step (preserves zoom by default). */
+  jumpToFailure(options?: VehicleSilTimelineFocusOptions): boolean;
+  /** Focuses a step by its 1-based index, pinning the cursor to its timestamp (preserves zoom when requested). */
+  focusStep(index: number, options?: VehicleSilTimelineFocusOptions): boolean;
 
   addEventListener<K extends keyof VehicleSilTimelineEventMap>(
     type: K,
